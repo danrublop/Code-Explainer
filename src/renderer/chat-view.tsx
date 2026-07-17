@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { BrandIcon } from './model-icon';
 import { parseCalOps, stripCalOps, describeOp, type CalOp } from './calendar/calendar-ops';
 import { parseDocOps, hasDocOps, stripDocOps, describeDocOps } from './note-doc';
+import { MessageBody } from './chat-message-body';
 
 // Chat surface for a source_kind=chat note: a bubble transcript + a composer with model picker
 // and a RAG toggle. Streaming mirrors the notch panel's XSS-safe path — deltas are appended via
@@ -169,7 +170,9 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
           if (showDoc) body = stripDocOps(body);
           return (
           <div key={i} className={`chat-msg ${t.role}`}>
-            {body && <div className="chat-text">{body}</div>}
+            {body && (t.role === 'assistant'
+              ? <MessageBody markdown={body} />
+              : <div className="chat-text">{body}</div>)}
             {showDoc && (
               <button className="chat-doc-chip" onClick={onShowDoc} title="Open the document">
                 {Ico.doc} {describeDocOps(docOps)}

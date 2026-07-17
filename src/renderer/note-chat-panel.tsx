@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { BrandIcon } from './model-icon';
 import { parseEdits, stripEdits, applyEdits } from './note-chat-edits';
+import { MessageBody } from './chat-message-body';
 
 // Note-side AI panel: an aside chat that has the CURRENT note as context and can edit it in place.
 // The transcript is ephemeral (never saved into the note) — it resets when you switch notes or
@@ -144,7 +145,9 @@ export function NoteChatPanel({ noteId, getMarkdown, onApply, onClose }: {
           const prose = edits.length ? stripEdits(t.content) : t.content;
           return (
             <div key={i} className={`chat-msg ${t.role}`}>
-              {prose && <div className="chat-text">{prose}</div>}
+              {prose && (t.role === 'assistant'
+                ? <MessageBody markdown={prose} />
+                : <div className="chat-text">{prose}</div>)}
               {edits.length > 0 && (
                 <div className="ncp-edit">
                   <span className="ncp-edit-label">{Ico.edit} {edits.length} edit{edits.length === 1 ? '' : 's'} to this note</span>

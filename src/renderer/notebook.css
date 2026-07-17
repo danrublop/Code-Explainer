@@ -624,6 +624,26 @@ body.resizing, body.resizing * { user-select: none !important; -webkit-user-sele
 .chat-text.streaming::after { content: ''; display: inline-block; width: 9px; height: 9px; margin-left: 4px; border-radius: 50%; background: var(--ink); vertical-align: baseline; animation: chat-blink 1.05s steps(2, start) infinite; }
 @keyframes chat-blink { 50% { opacity: 0; } }
 
+/* Rendered assistant Markdown (MessageBody): reset the plain-text pre-wrap and give block
+   elements sensible chat spacing. Kept tight so short answers don't sprout huge margins. */
+.chat-text.md { white-space: normal; }
+.chat-text.md > :first-child { margin-top: 0; }
+.chat-text.md > :last-child { margin-bottom: 0; }
+.chat-text.md p { margin: 0 0 0.7em; }
+.chat-text.md h1, .chat-text.md h2, .chat-text.md h3, .chat-text.md h4 { margin: 1em 0 0.4em; line-height: 1.3; font-weight: 650; }
+.chat-text.md h1 { font-size: 1.32em; } .chat-text.md h2 { font-size: 1.2em; } .chat-text.md h3 { font-size: 1.08em; } .chat-text.md h4 { font-size: 1em; }
+.chat-text.md ul, .chat-text.md ol { margin: 0 0 0.7em; padding-left: 1.5em; }
+.chat-text.md li { margin: 0.15em 0; }
+.chat-text.md li > p { margin: 0; }
+.chat-text.md a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.chat-text.md blockquote { margin: 0 0 0.7em; padding: 2px 0 2px 0.9em; border-left: 3px solid var(--hairline-strong); color: var(--muted); }
+.chat-text.md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; background: var(--hairline-soft); border-radius: 5px; padding: 0.1em 0.35em; }
+.chat-text.md pre { margin: 0 0 0.7em; padding: 11px 13px; background: var(--surface-card); border: 1px solid var(--hairline-strong); border-radius: 10px; overflow-x: auto; }
+.chat-text.md pre code { background: none; padding: 0; font-size: 0.88em; line-height: 1.6; }
+.chat-text.md table { border-collapse: collapse; margin: 0 0 0.7em; display: block; overflow-x: auto; }
+.chat-text.md th, .chat-text.md td { border: 1px solid var(--hairline-strong); padding: 4px 9px; text-align: left; }
+.chat-text.md hr { border: none; border-top: 1px solid var(--hairline-strong); margin: 1em 0; }
+
 .chat-cites { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
 .chat-cites-label { font-size: 11px; color: var(--muted-soft); text-transform: uppercase; letter-spacing: 0.05em; }
 .chat-cite { font-size: 12px; color: var(--ink-soft); background: var(--hairline-soft); border: none; border-radius: 7px; padding: 3px 9px; cursor: pointer; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
