@@ -785,6 +785,8 @@ class MainProcess {
       // A reload tears down the renderer's editor (and any AI block mid-generation) — stop
       // in-flight inline runs so they don't stream into a block that no longer exists.
       this.inlineGen?.abortAll();
+      this.chatSession?.abortAll();
+      this.noteChatSession?.abortAll();
       this.streamSession?.markNotReady();
     });
     this.notebookWindow.loadFile(join(__dirname, '..', 'notebook.html')).catch((e) => console.error('Failed to load notebook:', e));
@@ -799,6 +801,8 @@ class MainProcess {
       // No window to stream into — stop any in-flight generation and re-buffer.
       this.streamSession?.abortActive();
       this.inlineGen?.abortAll();
+      this.chatSession?.abortAll();
+      this.noteChatSession?.abortAll();
       this.streamSession?.markNotReady();
     });
   }
@@ -1309,6 +1313,10 @@ class MainProcess {
     this.ipcHandle('chat:abort', (_e, noteId: string) => {
       if (isValidEntryId(noteId)) this.chatSession?.abort(noteId);
     });
+    // Is a generation still running for this chat? The renderer queries on (re)mount so returning
+    // to a chat it navigated away from mid-stream re-enters the streaming state instead of a frozen
+    // pane (the run keeps going and persists on its own — see chat:send).
+    this.ipcHandle('chat:is-streaming', (_e, noteId: string) => !!(isValidEntryId(noteId) && this.chatSession?.isActive(noteId)));
     // RAG health for the chat UI: is the embed model available, and how many chunks are indexed.
     this.ipcHandle('chat:rag-status', async () => ({
       healthy: (await this.embedService?.healthy()) ?? false,

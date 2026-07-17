@@ -191,6 +191,7 @@ const api = {
   chatSend: (req: { noteId: string; text: string; model?: string; useRag?: boolean }): Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }> =>
     ipcRenderer.invoke('chat:send', req),
   chatAbort: (noteId: string): Promise<void> => ipcRenderer.invoke('chat:abort', noteId),
+  chatIsStreaming: (noteId: string): Promise<boolean> => ipcRenderer.invoke('chat:is-streaming', noteId),
   ragStatus: (): Promise<{ healthy: boolean; chunks: number; model: string }> => ipcRenderer.invoke('chat:rag-status'),
   onChatStart: (cb: (p: { noteId: string }) => void) => {
     const h = (_e: unknown, p: { noteId: string }) => cb(p);

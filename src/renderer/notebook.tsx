@@ -71,6 +71,7 @@ interface NotebookAPI {
   chatGet: (noteId: string) => Promise<ChatTurn[]>;
   chatSend: (req: { noteId: string; text: string; model?: string; useRag?: boolean }) => Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }>;
   chatAbort: (noteId: string) => Promise<void>;
+  chatIsStreaming: (noteId: string) => Promise<boolean>;
   ragStatus: () => Promise<{ healthy: boolean; chunks: number; model: string }>;
   onChatToken: (cb: (p: { noteId: string; delta: string }) => void) => () => void;
   onChatDone: (cb: (p: { noteId: string; answer: string; citations: string[]; model: string }) => void) => () => void;

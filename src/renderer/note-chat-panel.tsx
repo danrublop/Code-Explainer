@@ -48,10 +48,21 @@ export function NoteChatPanel({ noteId, getMarkdown, onApply, onClose }: {
   const noteIdRef = useRef(noteId);
   noteIdRef.current = noteId;
 
-  const scrollDown = () => requestAnimationFrame(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; });
+  // Auto-scroll, but during streaming only when already near the bottom (don't yank the user back
+  // while they read earlier turns). `force` overrides for send.
+  const scrollDown = (force = false) => requestAnimationFrame(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (force || el.scrollHeight - el.scrollTop - el.clientHeight < 80) el.scrollTop = el.scrollHeight;
+  });
 
-  // Ephemeral: switching notes starts a fresh conversation about the new note.
-  useEffect(() => { setTurns([]); setStreaming(false); setError(''); setApplied({}); if (streamRef.current) streamRef.current.textContent = ''; }, [noteId]);
+  // Ephemeral: switching notes starts a fresh conversation about the new note. This panel's
+  // transcript is never persisted, so a generation the user navigated away from (or closed the
+  // panel on) produces output nothing will show — abort it on leave/unmount to not burn a cloud call.
+  useEffect(() => {
+    setTurns([]); setStreaming(false); setError(''); setApplied({}); if (streamRef.current) streamRef.current.textContent = '';
+    return () => { window.notebookAPI.noteChatAbort(noteId); };
+  }, [noteId]);
   useEffect(() => { window.settingsAPI.listModels().then(setModels).catch(() => {}); }, []);
 
   useEffect(() => {
@@ -81,7 +92,7 @@ export function NoteChatPanel({ noteId, getMarkdown, onApply, onClose }: {
     const history = [...turns, { role: 'user' as const, content: text }];
     setTurns(history);
     setStreaming(true);
-    scrollDown();
+    scrollDown(true);
     try {
       const res = await window.notebookAPI.noteChatSend({ noteId, model: model || undefined, noteMarkdown: getMarkdown(), history });
       if (!res?.ok && res?.error !== 'cancelled') { setStreaming(false); setError(res?.error || 'The model returned nothing.'); }

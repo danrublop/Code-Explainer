@@ -60,6 +60,12 @@ export class InlineGenerationSession {
     if (this.runs.get(blockId)?.runId === runId) this.runs.delete(blockId);
   }
 
+  /** Is a run currently in flight for this key? Lets the renderer restore its streaming state
+   *  when it re-mounts a chat whose generation kept running while it was navigated away. */
+  isActive(blockId: string): boolean {
+    return this.runs.has(blockId);
+  }
+
   /** Abort the in-flight run for one key (user hit stop / switched away), if any. */
   abort(blockId: string): void {
     const run = this.runs.get(blockId);

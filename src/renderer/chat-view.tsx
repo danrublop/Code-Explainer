@@ -59,16 +59,30 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
   onChatDocRef.current = onChatDoc;
 
   const titleOf = (id: string) => notes.find((n) => n.id === id)?.title || 'Untitled';
-  const scrollDown = () => { requestAnimationFrame(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }); };
+  // Auto-scroll to the bottom, but during streaming only if the user is already near the bottom —
+  // so scrolling up to read earlier turns isn't yanked back down on every token. `force` overrides
+  // it for send / note-load, where jumping to the latest turn is what the user expects.
+  const scrollDown = (force = false) => requestAnimationFrame(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (force || nearBottom) el.scrollTop = el.scrollHeight;
+  });
 
   const loadTurns = useCallback(async () => {
     const t = await window.notebookAPI.chatGet(noteId).catch(() => []);
     setTurns(t);
-    scrollDown();
+    scrollDown(true);
   }, [noteId]);
 
-  // Load transcript on note switch; reset live state.
-  useEffect(() => { setStreaming(false); setError(''); if (streamRef.current) streamRef.current.textContent = ''; loadTurns(); }, [noteId, loadTurns]);
+  // Load transcript on note switch; reset live state. If a generation for this note is still
+  // running (we navigated away and came back), re-enter the streaming state so the live bubble
+  // mounts and its remaining tokens render — instead of a frozen pane until it finishes.
+  useEffect(() => {
+    setError(''); if (streamRef.current) streamRef.current.textContent = '';
+    loadTurns();
+    window.notebookAPI.chatIsStreaming(noteId).then(setStreaming).catch(() => setStreaming(false));
+  }, [noteId, loadTurns]);
 
   useEffect(() => { window.settingsAPI.listModels().then(setModels).catch(() => {}); }, []);
   useEffect(() => { window.notebookAPI.ragStatus().then((s) => setRagReady(s.healthy)).catch(() => {}); }, []);
@@ -104,7 +118,7 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
     // Optimistically show the user turn; the transcript reload on done makes it authoritative.
     setTurns((t) => [...t, { role: 'user', content: text }]);
     setStreaming(true);
-    scrollDown();
+    scrollDown(true);
     try {
       const res = await window.notebookAPI.chatSend({ noteId, text, model: model || undefined, useRag });
       if (!res.ok && res.error && res.error !== 'cancelled') { setStreaming(false); setError(res.error); }
