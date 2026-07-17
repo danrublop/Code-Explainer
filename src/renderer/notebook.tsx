@@ -69,9 +69,9 @@ interface NotebookAPI {
   onError: (cb: (message: string) => void) => () => void;
   // Chat (source_kind=chat notes)
   chatGet: (noteId: string) => Promise<ChatTurn[]>;
-  chatSend: (req: { noteId: string; text: string; model?: string; useRag?: boolean }) => Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }>;
+  chatSend: (req: { noteId: string; text: string; model?: string; useRag?: boolean; attachedNoteId?: string }) => Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }>;
   chatAbort: (noteId: string) => Promise<void>;
-  chatRegenerate: (req: { noteId: string; model?: string; useRag?: boolean }) => Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }>;
+  chatRegenerate: (req: { noteId: string; model?: string; useRag?: boolean; attachedNoteId?: string }) => Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }>;
   chatIsStreaming: (noteId: string) => Promise<boolean>;
   ragStatus: () => Promise<{ healthy: boolean; chunks: number; model: string }>;
   onChatToken: (cb: (p: { noteId: string; delta: string }) => void) => () => void;
@@ -965,6 +965,21 @@ function Notebook() {
     window.notebookAPI.list().then(setNotes);
   }, [chatDocs, notes]);
 
+  // Attach an existing note to the current chat (or detach): it opens in the same side-by-side pane
+  // as the companion doc AND is sent to the model as context (see chat:send attachedNoteId). This is
+  // the explicit alternative to silent all-notes RAG.
+  const handleAttachNote = useCallback((attachId: string | null) => {
+    const chatId = selectedRef.current;
+    if (!chatId) return;
+    setChatDocs((m) => {
+      const n = { ...m };
+      if (attachId) n[chatId] = attachId; else delete n[chatId];
+      localStorage.setItem('nb-chat-docs', JSON.stringify(n));
+      return n;
+    });
+    setChatDocOpen(!!attachId);
+  }, []);
+
   const renderNoteRow = (n: NoteSummary, depth: number) => {
     // Sections of the OPEN note (the only note whose live doc we have) drop down under its row.
     const showSections = selectedId === n.id && outline.length > 0;
@@ -1259,6 +1274,8 @@ function Notebook() {
                 onApplyCalOps={applyCalendarOps}
                 onChatDoc={handleChatDoc}
                 onShowDoc={() => setChatDocOpen(true)}
+                attachedNoteId={chatDocId}
+                onAttachNote={handleAttachNote}
                 onSaveAsNote={async (content) => {
                   // Create the note in the background — don't navigate away from the chat (which
                   // would unmount the view mid-"Saved" feedback and yank the user out of the thread).

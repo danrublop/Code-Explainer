@@ -188,10 +188,10 @@ const api = {
 
   // ── Chat (source_kind=chat notes) ──────────────────────────────────────────────
   chatGet: (noteId: string): Promise<ChatTurn[]> => ipcRenderer.invoke('chat:get', noteId),
-  chatSend: (req: { noteId: string; text: string; model?: string; useRag?: boolean }): Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }> =>
+  chatSend: (req: { noteId: string; text: string; model?: string; useRag?: boolean; attachedNoteId?: string }): Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }> =>
     ipcRenderer.invoke('chat:send', req),
   chatAbort: (noteId: string): Promise<void> => ipcRenderer.invoke('chat:abort', noteId),
-  chatRegenerate: (req: { noteId: string; model?: string; useRag?: boolean }): Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }> =>
+  chatRegenerate: (req: { noteId: string; model?: string; useRag?: boolean; attachedNoteId?: string }): Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }> =>
     ipcRenderer.invoke('chat:regenerate', req),
   chatIsStreaming: (noteId: string): Promise<boolean> => ipcRenderer.invoke('chat:is-streaming', noteId),
   ragStatus: (): Promise<{ healthy: boolean; chunks: number; model: string }> => ipcRenderer.invoke('chat:rag-status'),

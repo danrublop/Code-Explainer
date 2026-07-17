@@ -23,12 +23,14 @@ const Ico = {
   app: <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M11.146 15.854a1.207 1.207 0 0 1 1.708 0l1.56 1.56A2 2 0 0 1 15 18.828V21a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-2.172a2 2 0 0 1 .586-1.414z" /><path d="M18.828 15a2 2 0 0 1-1.414-.586l-1.56-1.56a1.207 1.207 0 0 1 0-1.708l1.56-1.56A2 2 0 0 1 18.828 9H21a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1z" /><path d="M6.586 14.414A2 2 0 0 1 5.172 15H3a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h2.172a2 2 0 0 1 1.414.586l1.56 1.56a1.207 1.207 0 0 1 0 1.708z" /><path d="M9 3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2.172a2 2 0 0 1-.586 1.414l-1.56 1.56a1.207 1.207 0 0 1-1.708 0l-1.56-1.56A2 2 0 0 1 9 5.172z" /></svg>,
   cal: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>,
   doc: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="8" y1="13" x2="16" y2="13" /><line x1="8" y1="17" x2="14" y2="17" /></svg>,
+  clip: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>,
+  x: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>,
 };
 
 const RAG_KEY = 'nb-chat-rag';
 const MODEL_KEY = 'nb-chat-model';
 
-export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCalOps, onChatDoc, onShowDoc, onSaveAsNote }: {
+export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCalOps, onChatDoc, onShowDoc, onSaveAsNote, attachedNoteId, onAttachNote }: {
   noteId: string;
   notes: NoteRef[];
   onOpenNote: (id: string) => void;
@@ -41,6 +43,10 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
   onShowDoc?: () => void;
   /** Save an answer as its own note. */
   onSaveAsNote?: (content: string) => void;
+  /** The note the user attached to this chat (shown side-by-side + fed as context), or null. */
+  attachedNoteId?: string | null;
+  /** Attach a note (opens it side-by-side + uses it as context) or detach (null). */
+  onAttachNote?: (id: string | null) => void;
 }) {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState('');
@@ -48,9 +54,13 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
   const [error, setError] = useState('');
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState(() => localStorage.getItem(MODEL_KEY) || '');
-  const [useRag, setUseRag] = useState(() => localStorage.getItem(RAG_KEY) !== 'off');
+  // Off by default: a chat should NOT silently pull in other notes unless you turn it on. (The
+  // note-side panel keeps the CURRENT note as context — that's a note you're already in, not this.)
+  const [useRag, setUseRag] = useState(() => localStorage.getItem(RAG_KEY) === 'on');
   const [ragReady, setRagReady] = useState(true); // false → embed model not pulled (falls back to keyword)
   const [modelOpen, setModelOpen] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const attachRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(-1); // index of the turn whose copy just fired
   const [saved, setSaved] = useState(-1); // index of the turn just saved as a note
   const [calApplied, setCalApplied] = useState<Record<number, string>>({}); // turn index → result
@@ -128,7 +138,7 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
     setStreaming(true);
     scrollDown(true);
     try {
-      const res = await window.notebookAPI.chatSend({ noteId, text, model: model || undefined, useRag });
+      const res = await window.notebookAPI.chatSend({ noteId, text, model: model || undefined, useRag, attachedNoteId: attachedNoteId || undefined });
       if (!res.ok && res.error && res.error !== 'cancelled') { setStreaming(false); setError(res.error); }
     } catch (e) {
       // A rejected invoke (dead handler, a throw before main's own try) would otherwise leave the
@@ -148,7 +158,7 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
     setStreaming(true);
     scrollDown(true);
     try {
-      const res = await window.notebookAPI.chatRegenerate({ noteId, model: model || undefined, useRag });
+      const res = await window.notebookAPI.chatRegenerate({ noteId, model: model || undefined, useRag, attachedNoteId: attachedNoteId || undefined });
       if (!res.ok && res.error && res.error !== 'cancelled') { setStreaming(false); setError(res.error); loadTurns(); }
     } catch (e) {
       // The invoke rejected — restore the answer we optimistically dropped from view.
@@ -191,13 +201,23 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, [modelOpen]);
 
+  // Close the attach-note picker on an outside click or Escape.
+  useEffect(() => {
+    if (!attachOpen) return;
+    const onDown = (e: MouseEvent) => { if (attachRef.current && !attachRef.current.contains(e.target as Node)) setAttachOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setAttachOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [attachOpen]);
+
   return (
     <div className="chat">
       <div className="chat-scroll" ref={scrollRef}>
         {turns.length === 0 && !streaming && (
           <div className="chat-empty">
             <span className="chat-empty-glyph">{Ico.app}</span>
-            <span>Ask anything. {useRag ? 'Answers can draw on your notes.' : 'Notes context is off.'}</span>
+            <span>Ask anything. {attachedNoteId ? `Answering with “${titleOf(attachedNoteId)}” attached.` : useRag ? 'Answers can draw on your notes.' : 'Attach a note (📎) to chat about it, or turn on notes context.'}</span>
           </div>
         )}
         {turns.map((t, i) => {
@@ -270,6 +290,14 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
       </div>
 
       <div className="chat-dock">
+        {attachedNoteId && onAttachNote && (
+          <div className="chat-attached">
+            {Ico.clip}
+            <span className="chat-attached-title">{titleOf(attachedNoteId)}</span>
+            <span className="chat-attached-hint">attached as context</span>
+            <button className="chat-attached-x" onClick={() => onAttachNote(null)} title="Detach">{Ico.x}</button>
+          </div>
+        )}
         <div className={`chat-box${input.trim() || streaming ? ' active' : ''}`}>
           <textarea
             className="chat-input"
@@ -300,6 +328,24 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
                   </div>
                 )}
               </div>
+              {onAttachNote && (
+                <div className="chat-attach-pick" ref={attachRef}>
+                  <button className={`chat-attach${attachedNoteId ? ' on' : ''}`} onClick={() => setAttachOpen((v) => !v)} title="Attach a note as context">
+                    {Ico.clip}
+                  </button>
+                  {attachOpen && (
+                    <div className="chat-model-menu chat-attach-menu">
+                      {notes.filter((n) => n.id !== noteId).length === 0
+                        ? <div className="chat-attach-empty">No other notes yet</div>
+                        : notes.filter((n) => n.id !== noteId).map((n) => (
+                          <button key={n.id} className={`chat-model-opt${n.id === attachedNoteId ? ' on' : ''}`} onClick={() => { onAttachNote(n.id); setAttachOpen(false); }}>
+                            {Ico.doc}<span className="chat-model-name">{n.title || 'Untitled'}</span>
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="chat-bar-right">
               <button className={`chat-rag${useRag ? ' on' : ''}`} onClick={toggleRag} title={useRag ? 'Using your notes as context' : 'Notes context off'}>

@@ -688,6 +688,21 @@ body.resizing, body.resizing * { user-select: none !important; -webkit-user-sele
 .chat-rag:hover { background: var(--hairline-soft); color: var(--ink); }
 .chat-rag.on { color: var(--accent); }
 .chat-rag.on svg { stroke: var(--accent); }
+
+/* Attach a note as context (paperclip) — sits next to the model picker in the composer. */
+.chat-attach-pick { position: relative; }
+.chat-attach { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: var(--muted); background: none; border: none; border-radius: 50%; padding: 0; cursor: pointer; }
+.chat-attach:hover { background: var(--hairline-soft); color: var(--ink); }
+.chat-attach.on { color: var(--accent); }
+.chat-attach.on svg { stroke: var(--accent); }
+.chat-attach-empty { padding: 8px 10px; font-size: 13px; color: var(--muted); }
+/* The attached-note chip above the composer. */
+.chat-attached { display: flex; align-items: center; gap: 7px; margin: 0 2px 7px; padding: 5px 8px 5px 10px; background: var(--surface-strong); border: 1px solid var(--hairline-strong); border-radius: 9px; color: var(--ink-soft); font-size: 12.5px; }
+.chat-attached svg:first-child { color: var(--accent); flex: none; }
+.chat-attached-title { font-weight: 550; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+.chat-attached-hint { color: var(--muted-soft); }
+.chat-attached-x { margin-left: auto; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: var(--muted); background: none; border: none; border-radius: 50%; cursor: pointer; }
+.chat-attached-x:hover { background: var(--hairline-soft); color: var(--ink); }
 .chat-send { flex: none; width: 32px; height: 32px; border: none; border-radius: 50%; background: var(--accent); color: var(--on-accent); cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .chat-send:hover:not(:disabled) { background: var(--accent-active); }
 .chat-send:disabled { background: var(--hairline-strong); color: var(--muted-soft); cursor: default; }
