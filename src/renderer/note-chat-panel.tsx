@@ -144,8 +144,10 @@ export function NoteChatPanel({ noteId, getMarkdown, onApply, onClose }: {
   useEffect(() => {
     if (!modelOpen) return;
     const onDown = (e: MouseEvent) => { if (modelPickRef.current && !modelPickRef.current.contains(e.target as Node)) setModelOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setModelOpen(false); };
     document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, [modelOpen]);
 
   return (

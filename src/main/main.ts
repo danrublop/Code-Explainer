@@ -1374,6 +1374,47 @@ class MainProcess {
       }
     });
 
+    // Regenerate the last answer: drops the trailing assistant turn and re-streams a fresh reply to
+    // the preceding user message. Same streaming/abort plumbing as chat:send.
+    this.ipcHandle('chat:regenerate', async (_e, req: { noteId: string; model?: string; useRag?: boolean }) => {
+      if (!this.chatController || !this.chatSession || !isValidEntryId(req.noteId)) {
+        return { ok: false, error: 'Chat unavailable' };
+      }
+      const noteId = req.noteId;
+      let began: { runId: string; signal: AbortSignal } | null = null;
+      try {
+        const model = req.model || this.routerConfig.defaultTextModel;
+        // Gate the calendar tools on the message actually being regenerated.
+        const prior = parseTranscript(this.notebookStore?.getBody(noteId) ?? '');
+        const lastUser = [...prior].reverse().find((t) => t.role === 'user')?.content ?? '';
+        began = this.chatSession.begin(noteId);
+        const { runId, signal } = began;
+        this.chatSession.emit(noteId, runId, 'chat:start', { noteId });
+        const now = new Date();
+        const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const { answer, citations } = await this.chatController.regenerate({
+          noteId, model, useRag: req.useRag ?? true,
+          systemPrefix: [
+            docToolsPrompt(),
+            mentionsCalendar(lastUser) ? calendarToolsPrompt(todayIso, now.toLocaleDateString('en-US', { weekday: 'long' })) : null,
+          ].filter(Boolean).join('\n\n'),
+          onToken: (delta) => this.chatSession!.emit(noteId, runId, 'chat:token', { noteId, delta }),
+          signal,
+        });
+        this.chatSession.emit(noteId, runId, 'chat:done', { noteId, answer, citations, model });
+        return { ok: true, answer, citations };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg !== 'cancelled' && !began?.signal.aborted) {
+          if (began) this.chatSession.emit(noteId, began.runId, 'chat:error', { noteId, error: msg });
+          else this.sendNotebook('chat:error', { noteId, error: msg });
+        }
+        return { ok: false, error: msg };
+      } finally {
+        if (began) this.chatSession.end(noteId, began.runId);
+      }
+    });
+
     // ── Note-side chat panel: ephemeral, current-note as context, can propose edits ──────
     // Unlike chat:send (which persists into a chat note), this keeps NO transcript: the renderer
     // owns the ephemeral history and sends it (plus the live note markdown) each turn. The model

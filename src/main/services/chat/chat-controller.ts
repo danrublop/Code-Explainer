@@ -56,7 +56,7 @@ export class ChatController {
     onToken?: (delta: string) => void;
     signal?: AbortSignal;
   }): Promise<{ answer: string; citations: string[] }> {
-    const { noteId, text, model, useRag, systemPrefix, onToken, signal } = opts;
+    const { noteId, text } = opts;
     const turns = parseTranscript(this.deps.store.getBody(noteId) ?? '');
 
     // Persist the user turn immediately, so a cancelled/failed generation still leaves the
@@ -64,12 +64,46 @@ export class ChatController {
     turns.push({ role: 'user', content: text, ts: this.deps.now() });
     this.deps.store.updateBody(noteId, serializeTranscript(turns));
 
+    return this.runAssistant(turns, { ...opts, query: text });
+  }
+
+  /**
+   * Re-answer the last exchange: drop the trailing assistant turn (the one being replaced) and
+   * stream a fresh answer to the preceding user message — without appending a duplicate user turn.
+   * Throws 'Nothing to regenerate' if the transcript doesn't end with a user→assistant pair.
+   */
+  async regenerate(opts: {
+    noteId: string;
+    model: string;
+    useRag: boolean;
+    systemPrefix?: string;
+    onToken?: (delta: string) => void;
+    signal?: AbortSignal;
+  }): Promise<{ answer: string; citations: string[] }> {
+    const { noteId } = opts;
+    const turns = parseTranscript(this.deps.store.getBody(noteId) ?? '');
+    if (turns.length && turns[turns.length - 1].role === 'assistant') turns.pop();
+    const last = turns[turns.length - 1];
+    if (!last || last.role !== 'user') throw new Error('Nothing to regenerate');
+    // Persist the drop now, so a cancelled regenerate leaves the user turn awaiting a reply.
+    this.deps.store.updateBody(noteId, serializeTranscript(turns));
+    return this.runAssistant(turns, { ...opts, query: last.content });
+  }
+
+  /** Shared tail of sendTurn/regenerate: RAG on `query`, stream, append + persist the answer.
+   *  `turns` already ends with the user message being answered. */
+  private async runAssistant(
+    turns: ChatTurn[],
+    opts: { noteId: string; model: string; useRag: boolean; systemPrefix?: string; query: string; onToken?: (d: string) => void; signal?: AbortSignal },
+  ): Promise<{ answer: string; citations: string[] }> {
+    const { noteId, model, useRag, systemPrefix, query, onToken, signal } = opts;
+
     // RAG: retrieve context for the user's message, excluding this chat's own note (so a chat
     // never feeds itself its own transcript). The retriever wraps note text as untrusted data.
     let ragSystem: string | undefined;
     let citations: string[] = [];
     if (useRag && this.deps.retrieve) {
-      const r = await this.deps.retrieve.retrieve(text, { excludeNoteId: noteId });
+      const r = await this.deps.retrieve.retrieve(query, { excludeNoteId: noteId });
       if (r) { ragSystem = r.system; citations = r.citations; }
     }
     // Tools first, retrieved notes after: the notes are untrusted data, so anything in them that
@@ -78,7 +112,7 @@ export class ChatController {
 
     // Throws on cancel ('cancelled') or error — the user turn is already saved, and we do NOT
     // append a partial assistant turn.
-    const answer = await this.deps.llm.generate({ model, prompt: text, messages: toMessages(turns), system, onToken, signal });
+    const answer = await this.deps.llm.generate({ model, prompt: query, messages: toMessages(turns), system, onToken, signal });
 
     turns.push({ role: 'assistant', content: answer, model, cites: citations.length ? citations : undefined, ts: this.deps.now() });
     this.deps.store.updateBody(noteId, serializeTranscript(turns));

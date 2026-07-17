@@ -71,6 +71,7 @@ interface NotebookAPI {
   chatGet: (noteId: string) => Promise<ChatTurn[]>;
   chatSend: (req: { noteId: string; text: string; model?: string; useRag?: boolean }) => Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }>;
   chatAbort: (noteId: string) => Promise<void>;
+  chatRegenerate: (req: { noteId: string; model?: string; useRag?: boolean }) => Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }>;
   chatIsStreaming: (noteId: string) => Promise<boolean>;
   ragStatus: () => Promise<{ healthy: boolean; chunks: number; model: string }>;
   onChatToken: (cb: (p: { noteId: string; delta: string }) => void) => () => void;
@@ -1258,6 +1259,7 @@ function Notebook() {
                 onApplyCalOps={applyCalendarOps}
                 onChatDoc={handleChatDoc}
                 onShowDoc={() => setChatDocOpen(true)}
+                onSaveAsNote={(content) => newNote(null, 'note', { body: content })}
               />
             </div>
             {chatDocId && chatDocOpen && (

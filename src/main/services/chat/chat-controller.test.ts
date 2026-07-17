@@ -72,3 +72,24 @@ describe('ChatController.sendTurn', () => {
     expect(retrieve.retrieve).not.toHaveBeenCalled();
   });
 });
+
+describe('ChatController.regenerate', () => {
+  it('drops the last assistant turn and re-answers the same user message (no duplicate user turn)', async () => {
+    const llm = okLlm('a fresh answer');
+    const store = fakeStore('<!--chat:user-->\nq1\n\n<!--chat:assistant model="m"-->\nold answer');
+    const c = new ChatController(deps({ llm, store }));
+    const r = await c.regenerate({ noteId: 'n1', model: 'm', useRag: false });
+    expect(r.answer).toBe('a fresh answer');
+    const turns = parseTranscript(store.body);
+    expect(turns.map((t) => t.role)).toEqual(['user', 'assistant']); // still one pair, not user/asst/user
+    expect(turns[0].content).toBe('q1');
+    expect(turns[1].content).toBe('a fresh answer');
+    // The model saw the history up to and including the user turn, prompted with that message.
+    expect(vi.mocked(llm.generate).mock.calls[0][0].prompt).toBe('q1');
+  });
+
+  it('throws when there is nothing to regenerate', async () => {
+    const c = new ChatController(deps({ store: fakeStore('') }));
+    await expect(c.regenerate({ noteId: 'n1', model: 'm', useRag: false })).rejects.toThrow('Nothing to regenerate');
+  });
+});
