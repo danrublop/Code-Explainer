@@ -1259,7 +1259,12 @@ function Notebook() {
                 onApplyCalOps={applyCalendarOps}
                 onChatDoc={handleChatDoc}
                 onShowDoc={() => setChatDocOpen(true)}
-                onSaveAsNote={(content) => newNote(null, 'note', { body: content })}
+                onSaveAsNote={async (content) => {
+                  // Create the note in the background — don't navigate away from the chat (which
+                  // would unmount the view mid-"Saved" feedback and yank the user out of the thread).
+                  const id = await window.notebookAPI.createNote(null, 'note', content).catch(() => null);
+                  if (id) window.notebookAPI.list().then(setNotes);
+                }}
               />
             </div>
             {chatDocId && chatDocOpen && (

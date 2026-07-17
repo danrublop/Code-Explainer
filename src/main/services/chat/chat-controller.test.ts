@@ -92,4 +92,25 @@ describe('ChatController.regenerate', () => {
     const c = new ChatController(deps({ store: fakeStore('') }));
     await expect(c.regenerate({ noteId: 'n1', model: 'm', useRag: false })).rejects.toThrow('Nothing to regenerate');
   });
+
+  it('keeps the previous answer on disk when a regenerate fails (no data loss)', async () => {
+    const store = fakeStore('<!--chat:user-->\nq1\n\n<!--chat:assistant model="m"-->\nold answer');
+    const llm: LlmClient = { generate: vi.fn(async () => { throw new Error('network down'); }) };
+    const c = new ChatController(deps({ llm, store }));
+    await expect(c.regenerate({ noteId: 'n1', model: 'm', useRag: false })).rejects.toThrow('network down');
+    // The drop is NOT persisted before the replacement exists, so the old answer survives.
+    expect(parseTranscript(store.body).map((t) => t.content)).toEqual(['q1', 'old answer']);
+  });
+});
+
+describe('ChatController history shaping', () => {
+  it('coalesces a leftover unanswered user turn with the next send (no double user turn)', async () => {
+    const llm = okLlm();
+    const store = fakeStore('<!--chat:user-->\nq1'); // a cancelled send left a lone user turn
+    const c = new ChatController(deps({ llm, store }));
+    await c.sendTurn({ noteId: 'n1', text: 'q2', model: 'm', useRag: false });
+    const sent = vi.mocked(llm.generate).mock.calls[0][0].messages!;
+    expect(sent.map((m) => m.role)).toEqual(['user']); // merged, not [user, user] → no provider 400
+    expect(sent[0].content).toBe('q1\n\nq2');
+  });
 });

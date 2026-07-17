@@ -53,9 +53,17 @@ describe('retrieve (embeddings path)', () => {
     expect(r!.citations).toEqual(['a']); // second note dropped — over budget
   });
 
-  it('returns null when nothing matches', async () => {
-    const r = await retrieve('q', { embedder: emb(vec(1, 0, 0)), chunks: () => [], keyword, titleOf }, { excludeNoteId: 'x' });
+  it('returns null when the index has vectors but none are relevant', async () => {
+    // Orthogonal chunk (cosine 0 < minScore) → embeddings path runs, filters it out, no fallback.
+    const orthogonal: Chunk[] = [{ noteId: 'a', idx: 0, text: 'x', vec: vec(0, 1, 0) }];
+    const r = await retrieve('q', { embedder: emb(vec(1, 0, 0)), chunks: () => orthogonal, keyword: { search: () => [], getBody: () => null }, titleOf }, { excludeNoteId: 'x' });
     expect(r).toBeNull();
+  });
+
+  it('falls back to keyword search when the vector index is empty (e.g. mid re-embed)', async () => {
+    // Embedder is UP (qvec non-null) but no vectors are indexed yet — must still get note context.
+    const r = await retrieve('cars', { embedder: emb(vec(1, 0, 0)), chunks: () => [], keyword, titleOf }, { excludeNoteId: 'self' });
+    expect(r!.citations).toEqual(['a']); // keyword hit used, 'self' excluded
   });
 });
 

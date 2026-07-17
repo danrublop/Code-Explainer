@@ -39,6 +39,12 @@ describe('note-chat edit protocol', () => {
     expect(r.failed).toBe(1);
   });
 
+  it('edits text next to markdown emphasis without the mid-word guard tripping on "_"', () => {
+    const r = applyEdits('make _foo_ bold', [{ find: 'foo', replace: 'bar' }]);
+    expect(r.md).toBe('make _bar_ bold'); // "_" is not a word char, so this is not a mid-word splice
+    expect(r).toMatchObject({ applied: 1, failed: 0 });
+  });
+
   it('applies multiple edits against the original offsets (no cross-shift)', () => {
     const r = applyEdits('alpha and omega', [
       { find: 'alpha', replace: 'FIRST' },

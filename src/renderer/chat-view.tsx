@@ -84,6 +84,7 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
   // running (we navigated away and came back), re-enter the streaming state so the live bubble
   // mounts and its remaining tokens render — instead of a frozen pane until it finishes.
   useEffect(() => {
+    setStreaming(false); // clear synchronously so the old note's stream state doesn't flash here
     setError(''); if (streamRef.current) streamRef.current.textContent = '';
     loadTurns();
     window.notebookAPI.chatIsStreaming(noteId).then(setStreaming).catch(() => setStreaming(false));
@@ -110,7 +111,9 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
     });
     const offErr = window.notebookAPI.onChatError((p) => {
       if (p.noteId !== noteIdRef.current) return;
-      setStreaming(false); setError(p.error);
+      // Reload the persisted transcript: a failed regenerate optimistically removed the old answer
+      // from view but never persisted that removal, so this brings the previous answer back.
+      setStreaming(false); setError(p.error); loadTurns();
     });
     return () => { offTok(); offDone(); offErr(); };
   }, [loadTurns, onTurnsChanged]);
@@ -146,10 +149,12 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
     scrollDown(true);
     try {
       const res = await window.notebookAPI.chatRegenerate({ noteId, model: model || undefined, useRag });
-      if (!res.ok && res.error && res.error !== 'cancelled') { setStreaming(false); setError(res.error); }
+      if (!res.ok && res.error && res.error !== 'cancelled') { setStreaming(false); setError(res.error); loadTurns(); }
     } catch (e) {
+      // The invoke rejected — restore the answer we optimistically dropped from view.
       setStreaming(false);
       setError(e instanceof Error ? e.message : String(e));
+      loadTurns();
     }
   }
 
@@ -207,7 +212,7 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
           if (showDoc) body = stripDocOps(body);
           return (
           <div key={i} className={`chat-msg ${t.role}`}>
-            {body && (t.role === 'assistant'
+            {body.trim() && (t.role === 'assistant'
               ? <MessageBody markdown={body} />
               : <div className="chat-text">{body}</div>)}
             {showDoc && (
@@ -236,7 +241,7 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
             )}
             {t.role === 'assistant' && (
               <div className="chat-actions">
-                <button className="chat-copy" onClick={() => copyTurn(i, t.content)} title={copied === i ? 'Copied' : 'Copy response'}>
+                <button className="chat-copy" onClick={() => copyTurn(i, body)} title={copied === i ? 'Copied' : 'Copy response'}>
                   {copied === i ? Ico.check : Ico.copy}
                 </button>
                 {onSaveAsNote && body && (

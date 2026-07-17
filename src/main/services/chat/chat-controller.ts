@@ -40,7 +40,15 @@ function toMessages(turns: ChatTurn[]): ChatMessage[] {
   // Trimming can leave a leading assistant turn; Anthropic rejects a history that doesn't start
   // with a user message. Drop any leading assistant turns (the final user turn always remains).
   while (msgs.length > 1 && msgs[0].role === 'assistant') msgs.shift();
-  return msgs;
+  // Coalesce consecutive same-role turns — a cancelled send leaves an unanswered user turn, so the
+  // next send would produce two user messages in a row, which providers (Anthropic) reject.
+  const merged: ChatMessage[] = [];
+  for (const m of msgs) {
+    const prev = merged[merged.length - 1];
+    if (prev && prev.role === m.role) prev.content += '\n\n' + m.content;
+    else merged.push({ ...m });
+  }
+  return merged;
 }
 
 export class ChatController {
@@ -85,8 +93,10 @@ export class ChatController {
     if (turns.length && turns[turns.length - 1].role === 'assistant') turns.pop();
     const last = turns[turns.length - 1];
     if (!last || last.role !== 'user') throw new Error('Nothing to regenerate');
-    // Persist the drop now, so a cancelled regenerate leaves the user turn awaiting a reply.
-    this.deps.store.updateBody(noteId, serializeTranscript(turns));
+    // Do NOT persist the drop yet: the on-disk transcript is the source of truth, so if we wrote
+    // [..., user] now and then generation were cancelled or failed, the previous answer would be
+    // gone for good. runAssistant persists once, on success — which atomically replaces the old
+    // assistant turn. On cancel/error the disk keeps the old answer (the renderer reloads it).
     return this.runAssistant(turns, { ...opts, query: last.content });
   }
 

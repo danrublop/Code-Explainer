@@ -175,10 +175,11 @@ export default function CalendarDoc({ noteId }: { noteId: string }) {
     setCursor((c) => addDays(c, e.deltaX > 0 ? 1 : -1));
   };
   const addEvent = () => {
-    // In month view "+" should land on today when today is the month you're looking at, not the 1st.
+    // In MONTH view "+" should land on today when today is the month you're looking at (not the
+    // 1st). In week/day view the cursor already names a specific day, so keep it — don't snap.
     const t = titleDate;
-    const inThisMonth = t.getFullYear() === today.getFullYear() && t.getMonth() === today.getMonth();
-    setCursor(inThisMonth ? new Date(today.getFullYear(), today.getMonth(), today.getDate()) : t);
+    const snapToday = view === 'month' && t.getFullYear() === today.getFullYear() && t.getMonth() === today.getMonth();
+    setCursor(snapToday ? new Date(today.getFullYear(), today.getMonth(), today.getDate()) : t);
     setView('day');
     setPendingAdd(true);
   };

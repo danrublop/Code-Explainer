@@ -62,9 +62,15 @@ export async function retrieve(
   const [qvec] = await deps.embedder.embed([QUERY_PREFIX + query]);
 
   // hits: {noteId, text} best-first.
+  // Use the vector index only when the embedder is up AND there are vectors to search. An empty
+  // index with a working embedder happens right after an embedding-recipe bump (everything is being
+  // re-embedded under a new tag) — fall through to keyword search then, so chat still gets note
+  // context instead of silently none. (A non-empty index that simply has no relevant chunk still
+  // returns null below, which is correct: don't inject irrelevant notes.)
+  const vectors = qvec ? deps.chunks() : [];
   let hits: { noteId: string; text: string }[];
-  if (qvec) {
-    hits = deps.chunks()
+  if (qvec && vectors.length) {
+    hits = vectors
       .filter((c) => c.noteId !== excludeNoteId && c.vec.length === qvec.length)
       .map((c) => ({ c, score: cosine(qvec, c.vec) }))
       .filter(({ score }) => score >= minScore) // don't inject irrelevant notes as context
@@ -72,7 +78,7 @@ export async function retrieve(
       .slice(0, k)
       .map(({ c }) => ({ noteId: c.noteId, text: c.text }));
   } else {
-    // Embeddings unavailable → BM25 keyword fallback over whole notes.
+    // Embeddings unavailable, or no vectors indexed yet → BM25 keyword fallback over whole notes.
     hits = deps.keyword.search(query)
       .filter((h) => h.id !== excludeNoteId)
       .slice(0, k)

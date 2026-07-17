@@ -165,7 +165,7 @@ export function NoteChatPanel({ noteId, getMarkdown, onApply, onClose }: {
           const prose = edits.length ? stripEdits(t.content) : t.content;
           return (
             <div key={i} className={`chat-msg ${t.role}`}>
-              {prose && (t.role === 'assistant'
+              {prose.trim() && (t.role === 'assistant'
                 ? <MessageBody markdown={prose} />
                 : <div className="chat-text">{prose}</div>)}
               {edits.length > 0 && (
@@ -178,7 +178,7 @@ export function NoteChatPanel({ noteId, getMarkdown, onApply, onClose }: {
               )}
               {t.role === 'assistant' && (
                 <div className="chat-actions">
-                  <button className="chat-copy" onClick={() => copyTurn(i, t.content)} title={copied === i ? 'Copied' : 'Copy'}>
+                  <button className="chat-copy" onClick={() => copyTurn(i, prose)} title={copied === i ? 'Copied' : 'Copy'}>
                     {copied === i ? Ico.check : Ico.copy}
                   </button>
                 </div>

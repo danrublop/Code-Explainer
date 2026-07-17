@@ -70,5 +70,7 @@ export class ChunkStore {
     return new Set(this.chunks.filter((c) => c.model === model).map((c) => c.noteId));
   }
 
-  count(): number { return this.chunks.length; }
+  count(model?: string): number {
+    return model ? this.chunks.filter((c) => c.model === model).length : this.chunks.length;
+  }
 }

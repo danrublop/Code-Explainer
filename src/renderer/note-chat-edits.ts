@@ -19,7 +19,9 @@ export function stripEdits(text: string): string {
   return text.replace(BLOCK, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-const isWord = (c: string) => /\w/.test(c);
+// Unicode letters/numbers only — NOT \w, which counts "_" (and misses accented/CJK text): we don't
+// want the guard tripping on markdown emphasis (_italic_, **bold**) or splicing mid-word in é/中/字.
+const isWord = (c: string) => /[\p{L}\p{N}]/u.test(c);
 // A match is mid-word when a word-char abuts a word-char edge of the needle — e.g. FIND "cat"
 // landing inside "concatenate". Splicing there silently mangles an unrelated word, so we refuse it.
 function isMidWord(hay: string, start: number, end: number): boolean {

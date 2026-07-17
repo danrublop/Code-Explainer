@@ -21,7 +21,7 @@ const TIME_WORDS =
  * or time — "cancel yoga", "push it an hour", "move that to Friday", "reschedule". A false positive
  * only arms the tools (the model still decides, the user still clicks Apply), so lean generous. */
 const CAL_ACTIONS =
-  /\b(cancel(led|ling|s)?|postpone\w*|reschedul\w*|(move|push|bump|shift|delay|slide)\s+(it|that|this|them|my|back|forward|up|to|by)|clear my|free up)\b/i;
+  /\b(cancell?(ed|ing|s)?|postpone\w*|reschedul\w*|(move|push|bump|shift|delay|slide)\s+(it|that|this|them|my|back|forward|up|to|by)|clear my|free up)\b/i;
 
 /**
  * True if the calendar tools should be armed for this message.

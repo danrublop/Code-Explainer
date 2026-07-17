@@ -1320,7 +1320,7 @@ class MainProcess {
     // RAG health for the chat UI: is the embed model available, and how many chunks are indexed.
     this.ipcHandle('chat:rag-status', async () => ({
       healthy: (await this.embedService?.healthy()) ?? false,
-      chunks: this.chunkStore?.count() ?? 0,
+      chunks: this.chunkStore?.count(EMBED_TAG) ?? 0,
       model: EMBED_MODEL,
     }));
     this.ipcHandle('chat:send', async (_e, req: { noteId: string; text: string; model?: string; useRag?: boolean }) => {
