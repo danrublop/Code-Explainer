@@ -76,14 +76,18 @@ export async function retrieve(
   }
   if (!hits.length) return null;
 
+  // A note (title or body) could itself contain the literal <user_notes> fence and "close" the
+  // data region early, promoting its following lines to system instructions. Strip the fence tags
+  // from every excerpt so untrusted content can never break out of the delimiter.
+  const defence = (s: string) => s.replace(/<\/?user_notes>/gi, '');
   const citations: string[] = [];
   const blocks: string[] = [];
   let used = 0;
   for (const h of hits) {
-    const excerpt = h.text.slice(0, perNoteBudget);
+    const excerpt = defence(h.text.slice(0, perNoteBudget));
     if (used + excerpt.length > charBudget) break;
     used += excerpt.length;
-    blocks.push(`[${deps.titleOf(h.noteId)}]\n${excerpt}`);
+    blocks.push(`[${defence(deps.titleOf(h.noteId))}]\n${excerpt}`);
     if (!citations.includes(h.noteId)) citations.push(h.noteId);
   }
   if (!blocks.length) return null;

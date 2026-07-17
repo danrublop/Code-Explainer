@@ -937,6 +937,10 @@ function Notebook() {
     let docId: string | undefined = chatDocs[chatId];
     if (docId && !notes.some((n) => n.id === docId)) docId = undefined; // was deleted → start over
     const base = docId ? (await window.notebookAPI.getBody(docId).catch(() => '')) ?? '' : '';
+    // A full-body DOC rewrite replaces everything. If the doc already holds the user's own content,
+    // confirm before nuking it — a rewrite steered by injected note context shouldn't silently wipe
+    // their work. First-time creation and surgical FIND/REPLACE edits never prompt.
+    if (ops.write && base.trim() && !window.confirm('The assistant wants to rewrite the whole document, replacing its current contents. Continue?')) return;
     const r = applyDocOps(base, ops);
     if (!docId) {
       docId = (await window.notebookAPI.createNote(null, 'note', r.md).catch(() => null)) ?? undefined;

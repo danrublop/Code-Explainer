@@ -37,6 +37,9 @@ function toMessages(turns: ChatTurn[]): ChatMessage[] {
   while (total > HISTORY_CHAR_BUDGET && msgs.length > 1) {
     total -= msgs.shift()!.content.length;
   }
+  // Trimming can leave a leading assistant turn; Anthropic rejects a history that doesn't start
+  // with a user message. Drop any leading assistant turns (the final user turn always remains).
+  while (msgs.length > 1 && msgs[0].role === 'assistant') msgs.shift();
   return msgs;
 }
 

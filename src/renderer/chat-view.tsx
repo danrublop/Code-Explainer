@@ -104,8 +104,15 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
     setTurns((t) => [...t, { role: 'user', content: text }]);
     setStreaming(true);
     scrollDown();
-    const res = await window.notebookAPI.chatSend({ noteId, text, model: model || undefined, useRag });
-    if (!res.ok && res.error && res.error !== 'cancelled') { setStreaming(false); setError(res.error); }
+    try {
+      const res = await window.notebookAPI.chatSend({ noteId, text, model: model || undefined, useRag });
+      if (!res.ok && res.error && res.error !== 'cancelled') { setStreaming(false); setError(res.error); }
+    } catch (e) {
+      // A rejected invoke (dead handler, a throw before main's own try) would otherwise leave the
+      // composer spinning forever with no error — same guard note-chat-panel already has.
+      setStreaming(false);
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   function stop() { window.notebookAPI.chatAbort(noteId); setStreaming(false); if (streamRef.current) streamRef.current.textContent = ''; loadTurns(); }

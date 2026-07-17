@@ -24,4 +24,28 @@ describe('note-chat edit protocol', () => {
   it('falls back to a whitespace-trimmed match', () => {
     expect(applyEdits('a  hello  b', [{ find: 'hello', replace: 'hi' }]).md).toBe('a  hi  b');
   });
+
+  it('refuses a non-unique FIND instead of guessing which one', () => {
+    const r = applyEdits('- milk\n- milk\n', [{ find: 'milk', replace: 'oat milk' }]);
+    expect(r.md).toBe('- milk\n- milk\n'); // untouched
+    expect(r.applied).toBe(0);
+    expect(r.failed).toBe(1);
+  });
+
+  it('refuses a mid-word match instead of splicing inside a word', () => {
+    const r = applyEdits('a concatenate function', [{ find: 'cat', replace: 'DOG' }]);
+    expect(r.md).toBe('a concatenate function'); // untouched
+    expect(r.applied).toBe(0);
+    expect(r.failed).toBe(1);
+  });
+
+  it('applies multiple edits against the original offsets (no cross-shift)', () => {
+    const r = applyEdits('alpha and omega', [
+      { find: 'alpha', replace: 'FIRST' },
+      { find: 'omega', replace: 'LAST' },
+    ]);
+    expect(r.md).toBe('FIRST and LAST');
+    expect(r.applied).toBe(2);
+    expect(r.failed).toBe(0);
+  });
 });
