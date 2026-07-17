@@ -317,6 +317,7 @@ function Notebook() {
   const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null); // folder id or '__root__'
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null); // focus the title on a freshly-created note
   const [title, setTitle] = useState('');
   const [streaming, setStreaming] = useState<'idle' | 'streaming' | 'error'>('idle');
   const [streamErr, setStreamErr] = useState('');
@@ -853,8 +854,12 @@ function Notebook() {
     const list = await window.notebookAPI.list();
     setNotes(list);
     if (folderId) expandFolder(folderId);
-    if (id) selectNote(id, list);
-    else { setSelectedId(null); selectedRef.current = null; setTitle(''); loadEditor(''); }
+    if (id) {
+      selectNote(id, list);
+      // A brand-new plain note opens with focus in the title, so you can name it and Tab into the
+      // body instead of clicking into an untitled void.
+      if (kind === 'note' && !seed?.title) requestAnimationFrame(() => titleInputRef.current?.focus());
+    } else { setSelectedId(null); selectedRef.current = null; setTitle(''); loadEditor(''); }
   }
   // Where a new chat lands when you don't say. Created on first chat (not on a fresh install, which
   // would just be an empty folder), then remembered BY ID — so renaming it to "Threads" or dragging
@@ -1296,7 +1301,7 @@ function Notebook() {
             <button className="find-nav" onClick={closeFind} title="Close (Esc)">✕</button>
           </div>
         )}
-        <input className="title-input" placeholder="Untitled" value={title} onChange={(e) => onTitleChange(e.target.value)} />
+        <input ref={titleInputRef} className="title-input" placeholder="Untitled" value={title} onChange={(e) => onTitleChange(e.target.value)} />
         {current && streaming !== 'streaming' && (current.model || current.sourceApp || current.createdAt) && (
           <div className="note-meta">
             {current.model && <span className="nm-model"><BrandIcon model={current.model} size={14} /> {current.model}</span>}
