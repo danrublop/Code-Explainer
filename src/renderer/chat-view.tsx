@@ -216,6 +216,7 @@ export function ChatView({ noteId, notes, onOpenNote, onTurnsChanged, onApplyCal
                 <button className="chat-copy" onClick={() => copyTurn(i, t.content)} title={copied === i ? 'Copied' : 'Copy response'}>
                   {copied === i ? Ico.check : Ico.copy}
                 </button>
+                {t.model && <span className="chat-msg-model" title="Model that wrote this">{t.model}</span>}
               </div>
             )}
           </div>

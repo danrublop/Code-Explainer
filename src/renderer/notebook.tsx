@@ -355,6 +355,9 @@ function Notebook() {
   const [editor, setEditor] = useState<Editor | null>(null); // live TipTap instance (for color/code toolbar)
   const [chatMenuOpen, setChatMenuOpen] = useState(false); // the ＋ dropdown (new note / chat / drawing)
   const [notePanelOpen, setNotePanelOpen] = useState(false); // right-side "chat with this note" panel
+  // The note-side panel is scoped to one note (its transcript resets per note), so moving to another
+  // note closes it — otherwise it stays open re-pointed at an unrelated note the user never asked it about.
+  useEffect(() => { setNotePanelOpen(false); }, [selectedId]);
   const [textColor, setTextColor] = useState('#26251e');
   const [hlColor, setHlColor] = useState('#ffe37a');
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem('nb-spellcheck') !== 'off');
@@ -1407,7 +1410,7 @@ function Notebook() {
         <NoteChatPanel
           noteId={current.id}
           getMarkdown={() => editor.getMarkdown()}
-          onApply={(md) => { editor.commands.setContent(md, { contentType: 'markdown' } as never); editor.commands.focus('end'); }}
+          onApply={(md) => { editor.commands.setContent(md, { contentType: 'markdown' } as never); }}
           onClose={() => setNotePanelOpen(false)}
         />
       )}

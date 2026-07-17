@@ -656,9 +656,10 @@ body.resizing, body.resizing * { user-select: none !important; -webkit-user-sele
 .chat-cal-apply:hover { filter: brightness(0.96); }
 .chat-cal-done { font-size: 12px; color: var(--muted); }
 
-.chat-actions { display: flex; gap: 4px; margin-top: 2px; }
+.chat-actions { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
 .chat-copy { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; color: var(--muted); background: none; border: none; border-radius: 7px; padding: 0; cursor: pointer; }
 .chat-copy:hover { background: var(--hairline-soft); color: var(--ink); }
+.chat-msg-model { font-size: 11px; color: var(--muted-soft); letter-spacing: 0.01em; }
 .chat-error { align-self: center; color: var(--accent-active); font-size: 12.5px; }
 .chat-hint { align-self: center; text-align: center; color: var(--muted); font-size: 12px; max-width: 480px; }
 .chat-hint code { font-family: var(--mono); font-size: 11px; background: var(--surface-strong); padding: 1px 5px; border-radius: 4px; }

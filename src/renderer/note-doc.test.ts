@@ -26,6 +26,14 @@ describe('parseDocOps', () => {
     const ops = parseDocOps('Your list already looks complete.');
     expect(hasDocOps(ops)).toBe(false);
   });
+
+  it('does not treat a FIND block inside the DOC body as an edit to apply', () => {
+    // A document that documents the edit syntax shouldn't have that syntax parsed back out as a
+    // real edit — the DOC span is excluded before edits are scanned.
+    const ops = parseDocOps('<<<DOC title: Guide>>>\nUse <<<FIND>>>x<<<REPLACE>>>y<<<END>>> to edit.\n<<<END>>>');
+    expect(ops.write).not.toBeNull();
+    expect(ops.edits).toEqual([]);
+  });
 });
 
 describe('stripDocOps', () => {

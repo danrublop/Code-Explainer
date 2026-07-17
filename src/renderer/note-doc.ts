@@ -23,7 +23,10 @@ const DOC = /<<<DOC(?:\s+title:\s*([^\n>]*))?>>>\r?\n?([\s\S]*?)\r?\n?<<<END>>>/
 export function parseDocOps(text: string): DocOps {
   const m = text.match(DOC);
   const write = m ? { title: (m[1] ?? '').trim() || undefined, body: m[2] } : null;
-  return { write, edits: parseEdits(text) };
+  // Parse FIND/REPLACE edits from the text OUTSIDE the DOC block only — otherwise a FIND/REPLACE
+  // that's part of the written document body would be misread as an edit to apply on top of it.
+  const outside = m ? text.slice(0, m.index!) + text.slice(m.index! + m[0].length) : text;
+  return { write, edits: parseEdits(outside) };
 }
 
 export function hasDocOps(ops: DocOps): boolean {
