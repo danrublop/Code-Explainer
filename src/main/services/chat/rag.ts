@@ -33,6 +33,23 @@ export interface RetrieveOpts {
   minScore?: number;
 }
 
+// Greetings / pleasantries carry no retrieval signal. Left in, they get matched anyway — nomic
+// scores even "hey" at ~0.45 cosine against ANY note, and the keyword fallback has no score floor
+// at all — and the model then parrots whatever note came back. A message whose every word is
+// greeting/filler retrieves nothing; any real request has at least one content word that isn't here.
+const FILLER_WORDS = new Set([
+  'hi', 'hii', 'hey', 'heyy', 'heyyy', 'hello', 'helloo', 'heya', 'hiya', 'yo', 'yoo', 'sup', 'howdy',
+  'hola', 'there', 'thanks', 'thank', 'thankyou', 'thx', 'ty', 'cheers', 'ok', 'okay', 'kk', 'cool',
+  'nice', 'great', 'awesome', 'please', 'pls', 'plz', 'good', 'morning', 'afternoon', 'evening',
+  'night', 'day', 'how', 'are', 'is', 'you', 'u', 'it', 'going', 'whats', 'what', 'up', 'wyd', 'hows',
+  'friend', 'buddy', 'man', 'dude', 'everyone', 'all', 'folks', 'team', 'yall',
+]);
+export function isSubstantiveQuery(query: string): boolean {
+  const tokens = query.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  if (!tokens.length) return false; // empty / punctuation only
+  return tokens.some((t) => !FILLER_WORDS.has(t));
+}
+
 export function cosine(a: Float32Array, b: Float32Array): number {
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
@@ -56,7 +73,12 @@ export async function retrieve(
   deps: RetrieveDeps,
   opts: RetrieveOpts,
 ): Promise<{ system: string; citations: string[] } | null> {
-  const { excludeNoteId, k = 5, charBudget = 6000, perNoteBudget = 1500, minScore = 0.15 } = opts;
+  // nomic's cosine floor for unrelated text is high (~0.45), so this threshold must be well above
+  // it or every note "matches" — measured relevant hits land ~0.7+, giving a clean gap.
+  const { excludeNoteId, k = 5, charBudget = 6000, perNoteBudget = 1500, minScore = 0.55 } = opts;
+  // A pure greeting retrieves nothing (see isSubstantiveQuery) — saves an embed call and, more
+  // importantly, stops the model parroting a note it was handed for saying "hey".
+  if (!isSubstantiveQuery(query)) return null;
   // Query gets nomic's search_query prefix to match the search_document prefix chunks were embedded
   // with (see embed-service); mismatched prefixes tank retrieval quality.
   const [qvec] = await deps.embedder.embed([QUERY_PREFIX + query]);
