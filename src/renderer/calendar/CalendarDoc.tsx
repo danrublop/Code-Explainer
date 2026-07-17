@@ -24,11 +24,29 @@ import {
   type CalEvent, type Days,
 } from './day-page';
 type View = 'month' | 'week' | 'day';
+const VIEW_KEY = 'nb-cal-view';
+
+// Walk from `target` up to (not past) `stop`, returning true if any element can still scroll
+// horizontally in `dir` — so a horizontal trackpad gesture over a wide code block/table scrolls it
+// instead of being hijacked as a day swipe.
+function canScrollX(target: HTMLElement | null, dir: number, stop: HTMLElement): boolean {
+  for (let el = target; el && el !== stop; el = el.parentElement) {
+    if (el.scrollWidth > el.clientWidth + 1) {
+      const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1;
+      if (dir > 0 ? !atEnd : el.scrollLeft > 0) return true;
+    }
+  }
+  return false;
+}
 
 export default function CalendarDoc({ noteId }: { noteId: string }) {
   const today = useMemo(() => new Date(), []);
   const [days, setDays] = useState<Days>({});
-  const [view, setView] = useState<View>('month');
+  const [view, setView] = useState<View>(() => {
+    const v = localStorage.getItem(VIEW_KEY);
+    return v === 'week' || v === 'day' || v === 'month' ? v : 'month';
+  });
+  useEffect(() => { localStorage.setItem(VIEW_KEY, view); }, [view]);
   const [cursor, setCursor] = useState(() => new Date(today.getFullYear(), today.getMonth(), today.getDate()));
   const hydrated = useRef(false);
 
@@ -147,13 +165,20 @@ export default function CalendarDoc({ noteId }: { noteId: string }) {
   const swipeLock = useRef(0);
   const onDayWheel = (e: React.WheelEvent) => {
     if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || Math.abs(e.deltaX) < 40) return;
+    // Don't flip the day if the gesture lands on a nested element that can still scroll
+    // horizontally (a wide code block or table inside the day editor) — that scroll is the intent,
+    // and remounting the editor here would kill the caret mid-edit.
+    if (canScrollX(e.target as HTMLElement, e.deltaX, e.currentTarget as HTMLElement)) return;
     const now = Date.now();
     if (now < swipeLock.current) return;
     swipeLock.current = now + 500;
     setCursor((c) => addDays(c, e.deltaX > 0 ? 1 : -1));
   };
   const addEvent = () => {
-    setCursor(titleDate);
+    // In month view "+" should land on today when today is the month you're looking at, not the 1st.
+    const t = titleDate;
+    const inThisMonth = t.getFullYear() === today.getFullYear() && t.getMonth() === today.getMonth();
+    setCursor(inThisMonth ? new Date(today.getFullYear(), today.getMonth(), today.getDate()) : t);
     setView('day');
     setPendingAdd(true);
   };
