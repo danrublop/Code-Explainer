@@ -41,6 +41,12 @@ describe('mentionsCalendar', () => {
     }
   });
 
+  it('arms on a bare edit imperative with no calendar noun or time', () => {
+    for (const text of ['cancel yoga', 'push it an hour', 'move that to the afternoon', 'reschedule', 'postpone the whole thing']) {
+      expect(mentionsCalendar(text), text).toBe(true);
+    }
+  });
+
   it('reads case-insensitively and inside a longer sentence', () => {
     expect(mentionsCalendar('Could you please add THAT to my Calendar for me')).toBe(true);
   });

@@ -62,6 +62,16 @@ match: Recitation
   it('finds nothing in an ordinary reply', () => {
     expect(parseCalOps('Your Monday looks busy — three lectures back to back.')).toEqual([]);
   });
+
+  it('drops a date that has the right shape but is not a real day', () => {
+    expect(parseCalOps(add().replace('2026-07-20', '2026-06-31'))).toEqual([]); // June has 30 days
+    expect(parseCalOps(add().replace('2026-07-20', '2026-13-01'))).toEqual([]); // no 13th month
+  });
+
+  it('falls an impossible move `to` back to the same day rather than an invalid one', () => {
+    const op = parseCalOps('<<<CAL MOVE>>>\ndate: 2026-07-20\nmatch: CSE 214\nto: 2026-02-30\n<<<END>>>')[0];
+    expect(op).toMatchObject({ kind: 'move', to: '2026-07-20' }); // Feb 30 rejected, stays put
+  });
 });
 
 describe('stripCalOps', () => {
@@ -109,6 +119,21 @@ describe('applyCalOps', () => {
 
   it('counts an op that matches nothing as failed, and changes nothing', () => {
     const r = applyCalOps(days, [{ kind: 'delete', date: '2026-07-20', match: 'Yoga' }]);
+    expect(r).toMatchObject({ applied: 0, failed: 1 });
+    expect(r.days).toEqual(days);
+  });
+
+  it('refuses an ambiguous title match instead of editing the wrong event', () => {
+    const two = {
+      '2026-07-20': '<div data-cal-event data-title="CSE 214 Lecture" data-start="09:30" data-end="10:45" data-color="#3b82f6"></div>\n\n<div data-cal-event data-title="CSE 214 Recitation" data-start="13:00" data-end="14:00" data-color="#3b82f6"></div>',
+    };
+    const r = applyCalOps(two, [{ kind: 'delete', date: '2026-07-20', match: 'CSE 214' }]);
+    expect(r).toMatchObject({ applied: 0, failed: 1 }); // two events contain "CSE 214" → won't guess
+    expect(eventsOf(r.days['2026-07-20'])).toHaveLength(2); // nothing deleted
+  });
+
+  it('counts a move that changes neither day nor time as failed, not applied', () => {
+    const r = applyCalOps(days, [{ kind: 'move', date: '2026-07-20', match: 'CSE 214', to: '2026-07-20', start: '', end: '' }]);
     expect(r).toMatchObject({ applied: 0, failed: 1 });
     expect(r.days).toEqual(days);
   });

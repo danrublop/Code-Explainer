@@ -6,6 +6,15 @@ import axios from 'axios';
 
 const BASE_URL = 'http://127.0.0.1:11434';
 export const EMBED_MODEL = 'nomic-embed-text';
+// Storage tag for embedded chunks — bump when the embedding recipe changes so backfill re-embeds
+// every note under the new tag instead of searching a mix of incompatible vector spaces. Bumped to
+// v2 when task prefixes were added below.
+export const EMBED_TAG = 'nomic-embed-text/v2-taskprefix';
+// nomic-embed-text is trained with task-instruction prefixes: documents and queries must each carry
+// their matching prefix or a differently-worded query misses the note it should hit.
+// https://huggingface.co/nomic-ai/nomic-embed-text-v1.5
+export const DOC_PREFIX = 'search_document: ';
+export const QUERY_PREFIX = 'search_query: ';
 
 export class EmbedService {
   /** Embed a batch. Result[i] is the vector for texts[i], or null if embedding failed. */

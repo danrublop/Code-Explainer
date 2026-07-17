@@ -17,6 +17,12 @@ const CAL_WORDS =
 const TIME_WORDS =
   /\b(today|tonight|tomorrow|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|may|june|july|august|september|october|november|december|noon|midnight|next (week|month|year)|this (week|month|weekend)|\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}|\d{1,2}\s?[ap]\.?m\.?|at \d{1,2}\b|\d{1,2}(st|nd|rd|th)\b)/i;
 
+/** Bare edit imperatives that mean "change something already scheduled", even with no calendar noun
+ * or time — "cancel yoga", "push it an hour", "move that to Friday", "reschedule". A false positive
+ * only arms the tools (the model still decides, the user still clicks Apply), so lean generous. */
+const CAL_ACTIONS =
+  /\b(cancel(led|ling|s)?|postpone\w*|reschedul\w*|(move|push|bump|shift|delay|slide)\s+(it|that|this|them|my|back|forward|up|to|by)|clear my|free up)\b/i;
+
 /**
  * True if the calendar tools should be armed for this message.
  *
@@ -24,5 +30,5 @@ const TIME_WORDS =
  * and get a prose reply instead of a revised block. Feed it the recent history too if that bites.
  */
 export function mentionsCalendar(text: string): boolean {
-  return CAL_WORDS.test(text) || TIME_WORDS.test(text);
+  return CAL_WORDS.test(text) || TIME_WORDS.test(text) || CAL_ACTIONS.test(text);
 }

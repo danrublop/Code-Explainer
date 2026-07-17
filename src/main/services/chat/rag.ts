@@ -3,6 +3,8 @@
 // unavailable (model missing / Ollama down → embedder returns null) it falls back to the
 // notebook's BM25 keyword search. Pure + injected deps → fully unit-testable.
 
+import { QUERY_PREFIX } from './embed-service';
+
 export interface Chunk { noteId: string; idx: number; text: string; vec: Float32Array }
 
 export interface Embedder {
@@ -55,7 +57,9 @@ export async function retrieve(
   opts: RetrieveOpts,
 ): Promise<{ system: string; citations: string[] } | null> {
   const { excludeNoteId, k = 5, charBudget = 6000, perNoteBudget = 1500, minScore = 0.15 } = opts;
-  const [qvec] = await deps.embedder.embed([query]);
+  // Query gets nomic's search_query prefix to match the search_document prefix chunks were embedded
+  // with (see embed-service); mismatched prefixes tank retrieval quality.
+  const [qvec] = await deps.embedder.embed([QUERY_PREFIX + query]);
 
   // hits: {noteId, text} best-first.
   let hits: { noteId: string; text: string }[];

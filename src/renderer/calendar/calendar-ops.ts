@@ -20,9 +20,14 @@
 // rejected op, not a mangled calendar.
 
 import {
-  ISO_RE, eventsOf, appendEvent, removeEventAt, replaceEventAt, toMin, hhmm, DEFAULT_MIN,
+  ISO_RE, iso, fromIso, eventsOf, appendEvent, removeEventAt, replaceEventAt, toMin, hhmm, DEFAULT_MIN,
   type CalEvent, type Days,
 } from './day-page';
+
+// ISO_RE only checks the shape — "2026-06-31" passes it but June has 30 days. fromIso normalizes an
+// impossible date (→ July 1), so a value that doesn't survive the round-trip was never a real day;
+// reject it rather than silently landing the event on a day the user never named.
+const isRealDate = (d: string) => ISO_RE.test(d) && iso(fromIso(d)) === d;
 
 export type CalOp =
   | { kind: 'add'; date: string; title: string; start: string; end: string; color: string }
@@ -55,7 +60,7 @@ export function parseCalOps(text: string): CalOp[] {
   for (const m of text.matchAll(BLOCK)) {
     const kind = m[1].toLowerCase();
     const f = fields(m[2]);
-    if (!ISO_RE.test(f.date || '')) continue;
+    if (!isRealDate(f.date || '')) continue;
     if (kind === 'add') {
       if (!f.title?.trim()) continue;
       const start = time(f.start);
@@ -70,7 +75,7 @@ export function parseCalOps(text: string): CalOp[] {
       });
     } else if (kind === 'move') {
       if (!f.match?.trim()) continue;
-      const to = ISO_RE.test(f.to || '') ? f.to : f.date;
+      const to = isRealDate(f.to || '') ? f.to : f.date;
       ops.push({ kind: 'move', date: f.date, match: f.match.trim(), to, start: time(f.start), end: time(f.end) });
     } else if (kind === 'delete') {
       if (!f.match?.trim()) continue;
@@ -86,11 +91,18 @@ export function stripCalOps(text: string): string {
 }
 
 // The model can't know an event's index, so it names one by title. Case-insensitive, and a
-// substring counts — "CSE 214" should find "CSE 214 Lecture".
+// substring counts — "CSE 214" should find "CSE 214 Lecture". Returns the matched index, or <0
+// when we won't act: -1 = no match, -2 = ambiguous (several events match and we can't know which
+// the user meant, so we refuse rather than edit the wrong one). An exact title match wins outright
+// even when other titles contain it as a substring.
 function findEvent(evs: CalEvent[], match: string): number {
   const m = match.toLowerCase();
-  const exact = evs.findIndex((e) => e.title.toLowerCase() === m);
-  return exact >= 0 ? exact : evs.findIndex((e) => e.title.toLowerCase().includes(m));
+  const exact = evs.flatMap((e, i) => (e.title.toLowerCase() === m ? [i] : []));
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return -2;
+  const subs = evs.flatMap((e, i) => (e.title.toLowerCase().includes(m) ? [i] : []));
+  if (subs.length === 1) return subs[0];
+  return subs.length > 1 ? -2 : -1;
 }
 
 /**
@@ -118,8 +130,12 @@ export function applyCalOps(days: Days, ops: CalOp[]): { days: Days; applied: nu
     // move: keep whatever the model didn't specify — an op that only says `to` shifts the day and
     // leaves the times alone.
     const moved: CalEvent = { ...evs[i], start: op.start || evs[i].start, end: op.end || evs[i].end };
-    if (op.to === op.date) next[op.date] = replaceEventAt(md, i, moved);
-    else {
+    if (op.to === op.date) {
+      // Same day and no time change ⇒ the move does nothing. Count it failed rather than reporting
+      // a change that never happened.
+      if (moved.start === evs[i].start && moved.end === evs[i].end) { failed++; continue; }
+      next[op.date] = replaceEventAt(md, i, moved);
+    } else {
       next[op.date] = removeEventAt(md, i);
       next[op.to] = appendEvent(next[op.to] || '', moved);
     }

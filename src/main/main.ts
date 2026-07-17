@@ -35,7 +35,7 @@ import type { NotebookIndex } from './services/notebook/types';
 import { BUILT_IN_PRESETS } from './services/presets/presets';
 import { ChatController, type RagRetriever } from './services/chat/chat-controller';
 import { parseTranscript } from './services/chat/chat-transcript';
-import { EmbedService, EMBED_MODEL } from './services/chat/embed-service';
+import { EmbedService, EMBED_MODEL, EMBED_TAG } from './services/chat/embed-service';
 import { ChunkStore } from './services/chat/chunk-store';
 import { EmbedSync } from './services/chat/embed-sync';
 import { retrieve as ragRetrieve } from './services/chat/rag';
@@ -321,7 +321,7 @@ class MainProcess {
         store: this.chunkStore,
         getBody: (id) => this.notebookStore?.getBody(id) ?? null,
         listNoteIds: () => this.notebookStore?.list().map((n) => n.id) ?? [],
-        model: EMBED_MODEL,
+        model: EMBED_TAG,
       });
       this.notebookStore.setChangeListener((id, deleted) => {
         if (deleted) this.embedSync?.remove(id);
@@ -371,7 +371,7 @@ class MainProcess {
           const titles = new Map(this.notebookStore!.list().map((n) => [n.id, n.title]));
           return ragRetrieve(query, {
             embedder: this.embedService!,
-            chunks: () => this.chunkStore!.all(),
+            chunks: () => this.chunkStore!.all(EMBED_TAG),
             keyword: {
               search: (q) => this.notebookStore!.search(q).map((h) => ({ id: h.id, snippet: h.snippet })),
               getBody: (id) => this.notebookStore!.getBody(id),
