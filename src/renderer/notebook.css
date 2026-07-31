@@ -959,3 +959,62 @@ body.resizing, body.resizing * { user-select: none !important; -webkit-user-sele
 .dash-stat { display: flex; justify-content: space-between; gap: 12px; padding: 11px 14px; border: 1px solid var(--hairline-soft); border-radius: 10px; background: var(--surface-card); }
 .dash-k { font-size: 12.5px; color: var(--muted); }
 .dash-v { font-size: 12.5px; color: var(--ink); font-weight: 550; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- Photos view (PhotosDoc) -------------------------------------------------------------
+   Two panes: a month rail on the left, a lazy-loading grid on the right. All colours come from
+   the theme vars so dark mode needs no separate rules. */
+.photos-doc { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+
+.photos-rail { width: 190px; flex: none; overflow-y: auto; border-right: 1px solid var(--hairline); padding: 10px 8px; }
+
+/* Workspace switcher — the attached libraries, one pill each. Wraps rather than scrolls: the
+   count is small (personal / work / family), and a hidden library reads as a missing one. */
+.ph-ws-bar { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 2px 9px; margin-bottom: 8px; border-bottom: 1px solid var(--hairline); }
+.ph-ws { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--hairline); background: none; color: var(--muted); font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; cursor: pointer; }
+.ph-ws:hover { color: var(--ink); }
+.ph-ws.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.ph-ws-add { border: 1px dashed var(--hairline); background: none; color: var(--muted); font-size: 12px; line-height: 1; padding: 3px 8px; border-radius: 999px; cursor: pointer; }
+.ph-ws-add:hover { color: var(--ink); border-style: solid; }
+.ph-ws-input { width: 100%; border: 1px solid var(--accent); background: var(--bg); color: var(--ink); font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; outline: none; }
+
+.photos-rail-head { display: flex; align-items: center; gap: 2px; font-size: 12px; color: var(--muted); padding: 0 4px 8px; }
+.photos-rail-head > span:first-child { flex: 1; min-width: 0; }
+.ph-icon { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 2px 5px; border-radius: 6px; }
+.ph-icon:hover { background: var(--hairline-soft); color: var(--ink); }
+.ph-year { margin-bottom: 10px; }
+.ph-year-label { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: 4px 6px; }
+.ph-month { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; padding: 5px 8px; border: none; border-radius: 7px; background: none; color: var(--ink); font-size: 13px; cursor: pointer; }
+.ph-month:hover { background: var(--hairline-soft); }
+.ph-month.selected { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.ph-count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ph-month.selected .ph-count { color: var(--accent); }
+
+.photos-main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.photos-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--hairline); flex-wrap: wrap; }
+.ph-spacer { flex: 1; }
+.ph-sources { display: flex; gap: 5px; flex-wrap: wrap; }
+.ph-chip { border: 1px solid var(--hairline); background: none; color: var(--muted); font-size: 11px; padding: 2px 9px; border-radius: 999px; cursor: pointer; }
+.ph-chip:hover { color: var(--ink); }
+.ph-chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.ph-size { width: 110px; accent-color: var(--accent); }
+
+.photos-grid { display: grid; gap: 4px; padding: 12px; overflow-y: auto; align-content: start; }
+.ph-tile { position: relative; padding: 0; border: none; border-radius: 6px; overflow: hidden; background: var(--canvas-soft); cursor: pointer; }
+.ph-tile img, .ph-tile video { width: 100%; height: 100%; object-fit: cover; display: block; background: var(--canvas-soft); }
+.ph-tile:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ph-raw { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; font-size: 11px; font-weight: 700; color: var(--muted); gap: 2px; }
+.ph-raw small { font-weight: 400; opacity: .7; }
+.ph-play { position: absolute; right: 5px; bottom: 4px; font-size: 10px; color: #fff; background: rgba(0,0,0,.55); border-radius: 4px; padding: 1px 5px; }
+
+.photos-status, .photos-empty { padding: 28px; color: var(--muted); font-size: 13px; }
+.photos-empty h2 { color: var(--ink); font-size: 16px; margin: 0 0 8px; }
+.photos-empty .dim { opacity: .7; }
+.ph-btn { border: 1px solid var(--hairline); background: none; color: var(--ink); font-size: 12px; padding: 4px 11px; border-radius: 7px; cursor: pointer; }
+.ph-btn:hover { background: var(--hairline-soft); }
+
+.ph-lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.82); display: flex; align-items: center; justify-content: center; z-index: 200; }
+.ph-lb-body { display: flex; flex-direction: column; max-width: 92vw; max-height: 92vh; gap: 8px; }
+.ph-lb-body img, .ph-lb-body video { max-width: 92vw; max-height: 82vh; object-fit: contain; border-radius: 8px; }
+.ph-lb-raw { background: var(--canvas); border-radius: 8px; padding: 32px; text-align: center; color: var(--ink); }
+.ph-lb-bar { display: flex; align-items: center; gap: 10px; color: #fff; font-size: 12px; }
+.ph-lb-bar .dim { opacity: .6; }

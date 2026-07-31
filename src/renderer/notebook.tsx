@@ -17,6 +17,7 @@ const DrawingDoc = lazy(() => import('./editor/drawing-doc'));
 // Calendar + system dashboard are small, dependency-free React views, so they ride in the main
 // bundle rather than a lazy chunk.
 import CalendarDoc from './calendar/CalendarDoc';
+import PhotosDoc from './photos/PhotosDoc';
 import { parseDays, serializeDays } from './calendar/day-page';
 import { applyCalOps, type CalOp } from './calendar/calendar-ops';
 import { parseDocOps, applyDocOps, hasDocOps } from './note-doc';
@@ -182,6 +183,8 @@ const Ico = {
   sun: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><line x1="12" y1="2" x2="12" y2="4" /><line x1="12" y1="20" x2="12" y2="22" /><line x1="4.2" y1="4.2" x2="5.6" y2="5.6" /><line x1="18.4" y1="18.4" x2="19.8" y2="19.8" /><line x1="2" y1="12" x2="4" y2="12" /><line x1="20" y1="12" x2="22" y2="12" /><line x1="4.2" y1="19.8" x2="5.6" y2="18.4" /><line x1="18.4" y1="5.6" x2="19.8" y2="4.2" /></svg>,
   // Lucide calendar — the calendar action + calendar row icon.
   calendar: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>,
+  // Lucide image — the Photos pin.
+  photos: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="m21 15-5-5L5 21" /></svg>,
   // Lucide external-link — "open in new window".
   newWindow: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></svg>,
   // Lucide list-todo — the insert-checklist action.
@@ -333,7 +336,9 @@ function Notebook() {
   const [createOpen, setCreateOpen] = useState(false); // "create note/folder" modal (empty-sidebar two-finger click)
   const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 }); // where the last context menu opened
   const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('nb-theme') === 'dark' ? 'dark' : 'light'));
-  const [view, setView] = useState<'notes' | 'settings'>('notes'); // right pane: editor / settings (system + models + keys)
+  // Right pane: editor / settings (system + models + keys) / photos. Photos is a view rather
+  // than a note kind — it has no body to persist, it just reads the library off disk.
+  const [view, setView] = useState<'notes' | 'settings' | 'photos'>('notes');
   const [outlineOpen, setOutlineOpen] = useState(localStorage.getItem('nb-outline') !== 'off'); // section outline panel
   const [flagColors, setFlagColors] = useState<Record<string, string>>({}); // heading text → flag colour (per note)
   const [flagMenu, setFlagMenu] = useState<{ text: string; x: number; y: number } | null>(null);
@@ -1171,14 +1176,22 @@ function Notebook() {
         >
           {calendarId && (
             <button
-              className={`cal-pin${selectedId === calendarId ? ' selected' : ''}`}
-              onClick={() => selectNote(calendarId)}
+              className={`cal-pin${view === 'notes' && selectedId === calendarId ? ' selected' : ''}`}
+              onClick={() => { setView('notes'); selectNote(calendarId); }}
               title="Calendar"
             >
               <span className="row-icon">{Ico.calendar}</span>
               <span className="cal-pin-label">Calendar</span>
             </button>
           )}
+          <button
+            className={`cal-pin${view === 'photos' ? ' selected' : ''}`}
+            onClick={() => setView('photos')}
+            title="Photos"
+          >
+            <span className="row-icon">{Ico.photos}</span>
+            <span className="cal-pin-label">Photos</span>
+          </button>
           {tagFilter ? (
             <>
               <div className="tag-filter-bar">
@@ -1247,7 +1260,9 @@ function Notebook() {
             </div>
           )}
         </div>
-        {view === 'settings' ? (
+        {view === 'photos' ? (
+          <PhotosDoc />
+        ) : view === 'settings' ? (
           <div className="settings-pane">
             <button className="settings-back" onClick={() => setView('notes')} title="Back to notes">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>

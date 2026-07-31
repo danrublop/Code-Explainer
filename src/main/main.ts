@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage, systemPreferences, shell, dialog, clipboard, screen } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage, systemPreferences, shell, dialog, clipboard, screen, protocol, net } from 'electron';
 import type { IpcMainInvokeEvent, IpcMainEvent } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { join, extname, basename, resolve, sep } from 'path';
@@ -28,6 +28,9 @@ import { MarkdownStore, isValidEntryId, makeEntry } from './services/notebook/ma
 import { FolderStore } from './services/notebook/folder-store';
 import { migrateHtmlBodies } from './services/notebook/migrate-html-bodies';
 import { NotebookStore } from './services/notebook/notebook-store';
+import { buildIndex, listMonth, resolveInLibrary } from './services/photos/photo-library';
+import { PhotoWorkspaceStore } from './services/photos/workspace-store';
+import { ThumbnailCache, mapLimit } from './services/photos/thumbnail-cache';
 import { sanitizeIncomingBlocks } from './services/notebook/sidecar';
 import { sanitizeIncomingDrawings } from './services/notebook/drawing-sidecar';
 import { MemoryNotebookIndex } from './services/notebook/memory-index';
@@ -43,6 +46,13 @@ import { mentionsCalendar } from './services/chat/calendar-intent';
 
 const DEFAULT_TEXT_MODEL = 'mistral:latest';
 const VISION_MODEL = 'llava:latest';
+
+// The photo grid loads thousands of full-size files; base64-over-IPC (how notebook:image works
+// for single note images) would blow up memory, so pixels come over a scheme instead. Must be
+// declared before 'ready'. `stream: true` gives <video> byte-range seeking for free.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'photo', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+]);
 
 // System prompt for the note-side chat panel: the live note is context (untrusted data), and the
 // model edits it by emitting FIND/REPLACE blocks the panel applies. Empty FIND ⇒ append to end.
@@ -226,9 +236,17 @@ class MainProcess {
   // Held by reference and handed to NotchController; mutated when the user changes their
   // default model on the Models page, so routing picks it up without rebuilding the controller.
   private routerConfig = { defaultTextModel: DEFAULT_TEXT_MODEL, visionModel: VISION_MODEL };
+  // The attached photo libraries — "Personal", "Work", "Family" — each a name + a root.
+  // Built in setupPhotoProtocol (first thing after app.whenReady, so userData resolves) because
+  // the photo:// handler resolves every request through it.
+  private photoWorkspaces: PhotoWorkspaceStore | null = null;
+  private photoThumbs: ThumbnailCache | null = null;
 
   async initialize(): Promise<void> {
     await app.whenReady();
+
+    this.setupPhotoProtocol();
+    this.startThumbnailPrewarm();
 
     // Wire the notch panel stack (capture + controller + notebook).
     this.setupNotch();
@@ -267,6 +285,94 @@ class MainProcess {
     return (!!this.notchPanel && wc === this.notchPanel.webContents)
       || (!!this.notebookWindow && wc === this.notebookWindow.webContents)
       || [...this.noteWindows.values()].some((w) => !w.isDestroyed() && wc === w.webContents);
+  }
+
+  // photo://ws-<id>/2024/2024-06/nikon/DSC_0001.JPG -> that file under THAT workspace's root,
+  // read-only.
+  //
+  // The host is the workspace id. `photo` is a *standard* scheme, so Chromium parses the first
+  // token after '//' as a hostname — photo:///2024/... would make '2024' the host (canonicalised
+  // to 0.0.7.234, since it's numeric) and drop the year from the path. Using the workspace id
+  // there keeps the whole library-relative path in pathname AND scopes the request to one root:
+  // a URL minted for Work resolves against Work's root only, so it can't reach into Personal.
+  //
+  // resolveInLibrary is the guard: the URL comes from the renderer and is untrusted, so it
+  // rejects traversal, absolute paths, non-media, and symlinks pointing out of the library.
+  private setupPhotoProtocol(): void {
+    this.photoWorkspaces = new PhotoWorkspaceStore(
+      join(app.getPath('userData'), 'photo-workspaces.json'),
+      () => randomUUID(),
+    );
+    this.photoThumbs = new ThumbnailCache(join(app.getPath('userData'), 'photo-thumbs'));
+    protocol.handle('photo', async (request) => {
+      let rel: string;
+      let root: string | null;
+      let ws = '';
+      let wantThumb = false;
+      try {
+        const u = new URL(request.url);
+        ws = u.hostname;
+        root = this.photoWorkspaces?.rootOf(ws) ?? null;
+        if (!root) return new Response('unknown workspace', { status: 400 });
+        // Decode %20 etc.; drop the leading '/' to get a library-relative path.
+        rel = decodeURIComponent(u.pathname).replace(/^\/+/, '');
+        wantThumb = u.searchParams.get('thumb') === '1';
+      } catch {
+        return new Response('bad request', { status: 400 });
+      }
+      const abs = resolveInLibrary(rel, root);
+      if (!abs) return new Response('not found', { status: 404 });
+
+      // Grid tiles ask for ?thumb=1: ~37 KB instead of a 5.6 MB original that would decode to
+      // ~97 MB of RGBA just to paint 160 pixels. Falls through to the original if the file
+      // can't be thumbnailed, so an unsupported codec degrades rather than showing nothing.
+      if (wantThumb) {
+        const buf = await this.photoThumbs!.get(ws, abs);
+        if (buf) {
+          return new Response(new Uint8Array(buf), {
+            headers: { 'content-type': 'image/jpeg', 'cache-control': 'max-age=31536000' },
+          });
+        }
+      }
+      return net.fetch(pathToFileURL(abs).toString())
+        .catch((e) => { console.error('[photo] read failed:', rel, e?.message ?? e); return new Response('read error', { status: 500 }); });
+    });
+  }
+
+  /**
+   * Build every workspace's thumbnails in the background, newest month first.
+   *
+   * On-demand generation alone leaves the first scroll through each month slow (~160ms/image
+   * of QuickLook). Pre-warming pays that once, off the critical path, so browsing is instant
+   * afterwards. Deliberately unhurried:
+   *   - starts after a delay, so it never competes with app launch
+   *   - concurrency 4, well under the core count, so the UI keeps its cores
+   *   - skips anything already cached, making it cheap to re-run and resumable across restarts
+   */
+  private startThumbnailPrewarm(): void {
+    setTimeout(() => {
+      void (async () => {
+        const cache = this.photoThumbs;
+        const spaces = this.photoWorkspaces?.list() ?? [];
+        if (!cache || !spaces.length) return;
+        for (const ws of spaces) {
+          const ix = buildIndex(ws.root);
+          if (!ix.exists) continue;
+          // Newest first: that's what the grid opens on, so it's what pays off soonest.
+          const files = ix.months.flatMap((m) =>
+            listMonth(m.month, ws.root).map((e) => join(ws.root, e.rel)));
+          const todo = files.filter((f) => !cache.has(ws.id, f));
+          if (!todo.length) continue;
+          console.log(`[thumbs] pre-warming ${todo.length} of ${files.length} for ${ws.name}`);
+          let done = 0;
+          await mapLimit(todo, 4, async (abs) => {
+            await cache.get(ws.id, abs);
+            if (++done % 500 === 0) console.log(`[thumbs] ${done}/${todo.length}`);
+          });
+          console.log(`[thumbs] ${ws.name} done (${todo.length})`);
+        }
+      })();
+    }, 8000);
   }
 
   private ipcHandle(channel: string, listener: (...args: any[]) => any): void {
@@ -1287,6 +1393,50 @@ class MainProcess {
         return null;
       }
     });
+    // --- Photos (read-only view over the attached libraries) -----------------------------
+    // Every call names a workspace; an unknown id resolves to no root, so it reads nothing.
+    const wsRoot = (ws: unknown): string | null => this.photoWorkspaces?.rootOf(ws) ?? null;
+
+    this.ipcHandle('photos:workspaces', () => this.photoWorkspaces?.list() ?? []);
+    // Attaching a folder is a user gesture through the system picker — the renderer never
+    // supplies a path, so it can't point a workspace at somewhere it shouldn't read.
+    this.ipcHandle('photos:workspace-add', async () => {
+      const win = this.notebookWindow;
+      const r = win && !win.isDestroyed()
+        ? await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], title: 'Choose a photo library folder' })
+        : await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'], title: 'Choose a photo library folder' });
+      const dir = r.canceled ? null : r.filePaths[0];
+      return dir ? this.photoWorkspaces?.add(dir) ?? null : null;
+    });
+    // Detach only — the folder and its photos are left exactly where they are.
+    this.ipcHandle('photos:workspace-remove', (_e, ws: unknown) => { this.photoWorkspaces?.remove(ws); });
+    this.ipcHandle('photos:workspace-rename', (_e, ws: unknown, name: unknown) => {
+      if (typeof name === 'string') this.photoWorkspaces?.rename(ws, name);
+    });
+
+    // Index is a directory walk, so it's re-read on demand rather than cached: the library is
+    // written by an external tool and would otherwise go stale mid-session.
+    this.ipcHandle('photos:index', (_e, ws: unknown) => {
+      const root = wsRoot(ws);
+      return root ? buildIndex(root) : { root: '', exists: false, total: 0, months: [], sources: [] };
+    });
+    this.ipcHandle('photos:list', (_e, ws: unknown, month: unknown) => {
+      const root = wsRoot(ws);
+      return root && typeof month === 'string' ? listMonth(month, root) : [];
+    });
+    // Reveal in Finder / open in the default viewer — same guard as the protocol handler, so a
+    // crafted rel can't make us launch an arbitrary file.
+    this.ipcHandle('photos:reveal', (_e, ws: unknown, rel: unknown) => {
+      const root = wsRoot(ws);
+      const abs = root && typeof rel === 'string' ? resolveInLibrary(rel, root) : null;
+      if (abs) shell.showItemInFolder(abs);
+    });
+    this.ipcHandle('photos:open', (_e, ws: unknown, rel: unknown) => {
+      const root = wsRoot(ws);
+      const abs = root && typeof rel === 'string' ? resolveInLibrary(rel, root) : null;
+      if (abs) void shell.openPath(abs);
+    });
+
     this.ipcHandle('notebook:rename', (_e, id: string, title: string) => { if (isValidEntryId(id)) this.notebookStore?.rename(id, title); });
     this.ipcHandle('notebook:pin', (_e, id: string, pinned: boolean) => { if (isValidEntryId(id)) this.notebookStore?.setPinned(id, pinned); });
     // Replace a note's tag set. Tags are user/model/clipboard-sourced, so sanitize at the

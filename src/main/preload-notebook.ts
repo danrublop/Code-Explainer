@@ -61,10 +61,37 @@ export interface NoteSummary {
   createdAt: string;
 }
 
+// Mirrors services/photos/photo-library.ts. Duplicated rather than imported: the preload is
+// bundled separately and must not pull main-process fs code into its graph.
+type PhotoKind = 'image' | 'raw' | 'video';
+interface PhotoEntry {
+  rel: string; name: string; month: string; source: string;
+  kind: PhotoKind; size: number; mtime: number;
+}
+interface PhotoIndex {
+  root: string; exists: boolean; total: number;
+  months: Array<{ month: string; year: string; count: number }>;
+  sources: string[];
+}
+interface PhotoWorkspace { id: string; name: string; root: string }
+
 const api = {
   // Handshake: tell main the notebook view has mounted and is listening, so it can flush
   // any answer that started streaming before the window finished loading.
   signalReady: () => ipcRenderer.send('notebook:ready'),
+  // Photos: read-only browse over the attached libraries. Every call names a workspace, so the
+  // main side can scope it to that one root. Pixels do NOT come through here — the grid points
+  // <img>/<video> at photo://<ws>/<rel> URLs.
+  photosWorkspaces: (): Promise<PhotoWorkspace[]> => ipcRenderer.invoke('photos:workspaces'),
+  /** Opens the system folder picker; resolves null if the user cancels. */
+  photosWorkspaceAdd: (): Promise<PhotoWorkspace | null> => ipcRenderer.invoke('photos:workspace-add'),
+  /** Detaches the folder from the app. Does not delete anything on disk. */
+  photosWorkspaceRemove: (ws: string): Promise<void> => ipcRenderer.invoke('photos:workspace-remove', ws),
+  photosWorkspaceRename: (ws: string, name: string): Promise<void> => ipcRenderer.invoke('photos:workspace-rename', ws, name),
+  photosIndex: (ws: string): Promise<PhotoIndex> => ipcRenderer.invoke('photos:index', ws),
+  photosList: (ws: string, month: string): Promise<PhotoEntry[]> => ipcRenderer.invoke('photos:list', ws, month),
+  photosReveal: (ws: string, rel: string): Promise<void> => ipcRenderer.invoke('photos:reveal', ws, rel),
+  photosOpen: (ws: string, rel: string): Promise<void> => ipcRenderer.invoke('photos:open', ws, rel),
   // Notes-app operations
   openSettings: () => ipcRenderer.send('open-settings'),
   /** Live Mac system stats (CPU/memory/load/uptime) for the dashboard view. */
