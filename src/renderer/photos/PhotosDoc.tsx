@@ -13,10 +13,11 @@
 // asks the renderer for ~18 GB. The lightbox still loads the full-resolution original.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Viewer } from './Viewer';
 import { photoUrl, thumbUrl } from './photo-url';
 
 type PhotoKind = 'image' | 'raw' | 'video';
-interface PhotoEntry {
+export interface PhotoEntry {
   rel: string; name: string; month: string; source: string;
   kind: PhotoKind; size: number; mtime: number;
 }
@@ -59,6 +60,11 @@ interface PhotosApi {
   photosTrashRestore: (ws: string, rels: string[]) => Promise<RestoreResult[]>;
   photosReveal: (ws: string, rel: string) => Promise<void>;
   photosOpen: (ws: string, rel: string) => Promise<void>;
+  photosAlbums: (ws: string) => Promise<{ albums: Record<string, string[]>; rotations: Record<string, number> }>;
+  photosAlbumAdd: (ws: string, name: string, rels: string[]) => Promise<Record<string, string[]>>;
+  photosAlbumRemove: (ws: string, name: string, rels: string[]) => Promise<Record<string, string[]>>;
+  photosAlbumDelete: (ws: string, name: string) => Promise<Record<string, string[]>>;
+  photosRotate: (ws: string, rel: string, deg: number) => Promise<Record<string, number>>;
 }
 function api(): PhotosApi { return (window as unknown as { notebookAPI: PhotosApi }).notebookAPI; }
 
@@ -85,9 +91,12 @@ const TRASH = '@trash';
 // paint, then smooth, because thumbnails already load lazily through IntersectionObserver).
 // Virtualise the grid if a library ever gets big enough for that to hurt.
 const ALL = '@all';
+// Albums are a pseudo-month too: '@album:<name>' selects that album's rels out of the library.
+const ALBUM_PREFIX = '@album:';
 const EMPTY_MARKS: PhotoMarks = { marks: {}, totals: { keep: 0, del: 0, delBytes: 0 } };
 
 function monthLabel(m: string): string {
+  if (m.startsWith(ALBUM_PREFIX)) return m.slice(ALBUM_PREFIX.length);
   if (m === ALL) return 'All photos';
   if (m === LARGEST) return 'Largest files';
   if (m === TRASH) return 'Trash';
@@ -168,6 +177,12 @@ export default function PhotosDoc() {
   const [source, setSource] = useState<string>('all');
   const [loading, setLoading] = useState(false);
   const [lightbox, setLightbox] = useState<PhotoEntry | null>(null);
+  const [albums, setAlbums] = useState<Record<string, string[]>>({});
+  const [rotations, setRotations] = useState<Record<string, number>>({});
+  const albumsRef = useRef<Record<string, string[]>>({});
+  albumsRef.current = albums;
+  const [albumOpen, setAlbumOpen] = useState(false);
+  const [albumName, setAlbumName] = useState('');
   const [size, setSize] = useState<number>(() => Number(localStorage.getItem(SIZE_KEY)) || 160);
   const [sort, setSort] = useState<'newest' | 'largest'>('newest');
   const [onlyUnbacked, setOnlyUnbacked] = useState(false);
@@ -225,6 +240,15 @@ export default function PhotosDoc() {
   useEffect(() => { void reloadTrash(); }, [reloadTrash, reloadToken]);
 
   useEffect(() => {
+    if (!ws) { setAlbums({}); setRotations({}); return; }
+    let cancelled = false;
+    api().photosAlbums(ws)
+      .then((r) => { if (!cancelled) { setAlbums(r.albums ?? {}); setRotations(r.rotations ?? {}); } })
+      .catch(() => { if (!cancelled) { setAlbums({}); setRotations({}); } });
+    return () => { cancelled = true; };
+  }, [ws, reloadToken]);
+
+  useEffect(() => {
     if (!ws) { setBackedUp(new Set()); return; }
     let cancelled = false;
     api().photosBackedUp(ws)
@@ -242,7 +266,12 @@ export default function PhotosDoc() {
     if (month === TRASH) { setItems([]); setLoading(false); return; }
     // ALL and LARGEST are the same whole-library walk — they differ only in how many entries come
     // back and how `sort` orders them, so one call serves both.
-    const p = month === ALL ? api().photosLargest(ws, 200_000)
+    const p = month.startsWith(ALBUM_PREFIX)
+      ? api().photosLargest(ws, 200_000).then((r) => {
+          const want = new Set(albumsRef.current[month.slice(ALBUM_PREFIX.length)] ?? []);
+          return r.filter((x) => want.has(x.rel));
+        })
+      : month === ALL ? api().photosLargest(ws, 200_000)
       : month === LARGEST ? api().photosLargest(ws, LARGEST_LIMIT)
         : api().photosList(ws, month);
     p.then((r) => { if (!cancelled) { setItems(r); setSource('all'); } })
@@ -377,23 +406,11 @@ export default function PhotosDoc() {
     return () => window.removeEventListener('keydown', onKey);
   }, [sel.size, applyMark, clearSel, shown, month]);
 
-  // Lightbox arrow-key navigation over the currently filtered set.
-  const shownRef = useRef(shown);
-  shownRef.current = shown;
-  useEffect(() => {
-    if (!lightbox) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setLightbox(null); return; }
-      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-      const list = shownRef.current;
-      const i = list.findIndex((x) => x.rel === lightbox.rel);
-      if (i < 0) return;
-      const next = list[e.key === 'ArrowRight' ? i + 1 : i - 1];
-      if (next) setLightbox(next);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [lightbox]);
+  // The viewer owns arrow-key navigation now; it needs the index, not the entry.
+  const lbIndex = useMemo(
+    () => (lightbox ? shown.findIndex((x) => x.rel === lightbox.rel) : -1),
+    [lightbox, shown],
+  );
 
   const byYear = useMemo(() => {
     const g = new Map<string, Array<{ month: string; count: number }>>();
@@ -473,15 +490,27 @@ export default function PhotosDoc() {
             <span className="ph-count">top {LARGEST_LIMIT}</span>
           </button>
         )}
-        {trashRows.length > 0 && (
-          <button
-            className={`ph-month ph-largest${month === TRASH ? ' selected' : ''}`}
-            onClick={() => { setMonth(TRASH); setRestoreResults(null); }}
-            title="What this app moved to the Trash, and where it came from"
-          >
-            <span>Trash</span>
-            <span className="ph-count">{trashPending.length} · {fmtSize(trashBytes)}</span>
-          </button>
+        {Object.keys(albums).length > 0 && (
+          <div className="ph-year">
+            <div className="ph-year-label">Albums</div>
+            {Object.entries(albums).sort(([a], [b]) => a.localeCompare(b)).map(([name, rels]) => (
+              <button
+                key={name}
+                className={`ph-month${month === ALBUM_PREFIX + name ? ' selected' : ''}`}
+                onClick={() => setMonth(ALBUM_PREFIX + name)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  if (!confirm(`Delete the album "${name}"? The photos stay on disk.`)) return;
+                  void api().photosAlbumDelete(ws, name).then(setAlbums).catch(() => {});
+                  if (month === ALBUM_PREFIX + name) setMonth(ALL);
+                }}
+                title={`${rels.length} photos · two-finger click to delete the album (photos stay)`}
+              >
+                <span>{name}</span>
+                <span className="ph-count">{rels.length.toLocaleString()}</span>
+              </button>
+            ))}
+          </div>
         )}
         {byYear.map(([year, months]) => (
           <div key={year} className="ph-year">
@@ -640,7 +669,7 @@ export default function PhotosDoc() {
           />
         </div>
 
-        {sel.size > 0 ? (
+        {sel.size > 0 && (
           <div className="ph-selbar">
             <strong>{sel.size.toLocaleString()} selected · {fmtSize(selBytes)}</strong>
             <button className="ph-btn ph-danger" onClick={() => void applyMark('delete')}>Delete (D)</button>
@@ -648,13 +677,8 @@ export default function PhotosDoc() {
             <button className="ph-btn" onClick={() => void applyMark(null)}>Unmark (U)</button>
             <div className="ph-spacer" />
             <button className="ph-btn" onClick={() => setSel(new Set(shown.map((i) => i.rel)))}>Select all shown</button>
+            <button className="ph-btn" onClick={() => { setAlbumName(''); setAlbumOpen(true); }}>Add to album…</button>
             <button className="ph-btn" onClick={clearSel}>Cancel (Esc)</button>
-          </div>
-        ) : (
-          <div className="ph-selbar ph-hint">
-            <span>Hover a photo and click the circle to select (⌘-click and shift-click work too) ·
-              then <b>D</b> delete, <b>K</b> keep, <b>U</b> unmark.
-              Nothing moves until you press Move to Trash.</span>
           </div>
         )}
 
@@ -670,8 +694,7 @@ export default function PhotosDoc() {
               return (
               <button
                 key={it.rel}
-                className={`ph-tile${picked ? ' picked' : ''}${mark ? ` mk-${mark}` : ''}`}
-                style={{ height: size }}
+                className={`ph-tile${picked ? ' picked' : ''}${mark ? ` mk-${mark}` : ''}${it.kind === 'video' ? ' is-video' : ''}`}
                 onClick={(e) => onTileClick(e, it, idx)}
                 // Space toggles selection on the focused tile; without this a keyboard user has
                 // no way to START a selection (Enter/Space on a <button> fires the plain-click
@@ -697,13 +720,17 @@ export default function PhotosDoc() {
                 ) : it.kind === 'video' ? (
                   <VideoThumb src={photoUrl(ws, it.rel)} poster={thumbUrl(ws, it.rel)} />
                 ) : (
-                  <img src={thumbUrl(ws, it.rel)} loading="lazy" decoding="async" alt="" draggable={false} />
+                  <img src={thumbUrl(ws, it.rel)} loading="lazy" decoding="async" alt="" draggable={false}
+                       style={rotations[it.rel] ? { transform: `rotate(${rotations[it.rel]}deg)` } : undefined} />
                 )}
                 {it.kind === 'video' && <span className="ph-play">▶</span>}
                 {/* Size is on every tile, not just the video ones: it is the only number on this
                     screen that tells you whether deleting something is worth doing. */}
                 <span className="ph-size-badge">{fmtSize(it.size)}</span>
                 {mark && <span className={`ph-mark ${mark}`}>{mark === 'delete' ? 'DELETE' : 'KEEP'}</span>}
+                {/* Filename on hover, as the gallery does it — the grid is otherwise anonymous
+                    once you are looking at 3k near-identical thumbnails. */}
+                <span className="ph-cap">{it.name}</span>
               </button>
               );
             })}
@@ -713,30 +740,74 @@ export default function PhotosDoc() {
         )}
       </div>
 
-      {lightbox && (
-        <div className="ph-lightbox" onClick={() => setLightbox(null)}>
-          <div className="ph-lb-body" onClick={(e) => e.stopPropagation()}>
-            {lightbox.kind === 'video' ? (
-              <video src={photoUrl(ws, lightbox.rel)} controls autoPlay />
-            ) : lightbox.kind === 'raw' ? (
-              <div className="ph-lb-raw">
-                <p>{lightbox.name}</p>
-                <p className="dim">RAW files need an external viewer.</p>
-                <button className="ph-btn" onClick={() => void api().photosOpen(ws, lightbox.rel)}>Open in default app</button>
+      {/* Add-to-album: existing albums to click, plus a new-name field at the bottom — the same
+          shape as the offline gallery's dialog. */}
+      {albumOpen && (
+        <div className="ph-lightbox" onClick={() => setAlbumOpen(false)}>
+          <div className="ph-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Add {sel.size.toLocaleString()} to album</h3>
+            {Object.keys(albums).length > 0 && (
+              <div className="ph-alb-list">
+                {Object.entries(albums).sort(([a], [b]) => a.localeCompare(b)).map(([name, rels]) => (
+                  <button
+                    key={name}
+                    className="ph-alb-row"
+                    onClick={() => {
+                      void api().photosAlbumAdd(ws, name, [...sel]).then(setAlbums).catch(() => {});
+                      setAlbumOpen(false); clearSel();
+                    }}
+                  >
+                    <span>{name}</span>
+                    <span className="ph-count">{rels.length.toLocaleString()}</span>
+                  </button>
+                ))}
               </div>
-            ) : (
-              <img src={photoUrl(ws, lightbox.rel)} alt="" />
             )}
-            <div className="ph-lb-bar">
-              <span>{lightbox.name}</span>
-              <span className="dim">{lightbox.source} · {fmtSize(lightbox.size)}</span>
-              <div className="ph-spacer" />
-              <button className="ph-btn" onClick={() => void api().photosReveal(ws, lightbox.rel)}>Reveal</button>
-              <button className="ph-btn" onClick={() => void api().photosOpen(ws, lightbox.rel)}>Open</button>
-              <button className="ph-btn" onClick={() => setLightbox(null)}>Close</button>
+            <div className="ph-alb-new">
+              <input
+                autoFocus
+                placeholder="New album name"
+                value={albumName}
+                onChange={(e) => setAlbumName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') { setAlbumOpen(false); return; }
+                  if (e.key !== 'Enter' || !albumName.trim()) return;
+                  void api().photosAlbumAdd(ws, albumName, [...sel]).then(setAlbums).catch(() => {});
+                  setAlbumOpen(false); clearSel();
+                }}
+              />
+              <button
+                className="ph-btn"
+                disabled={!albumName.trim()}
+                onClick={() => {
+                  void api().photosAlbumAdd(ws, albumName, [...sel]).then(setAlbums).catch(() => {});
+                  setAlbumOpen(false); clearSel();
+                }}
+              >Create</button>
+            </div>
+            <div className="ph-modal-actions">
+              <button className="ph-btn" onClick={() => setAlbumOpen(false)}>Cancel</button>
             </div>
           </div>
         </div>
+      )}
+
+      {lightbox && lbIndex >= 0 && (
+        <Viewer
+          items={shown}
+          index={lbIndex}
+          rotation={rotations[lightbox.rel] ?? 0}
+          srcFor={(rel) => photoUrl(ws, rel)}
+          thumbFor={(rel) => thumbUrl(ws, rel)}
+          onIndex={(i) => setLightbox(shown[i] ?? null)}
+          onRotate={(deg) => {
+            setRotations((r) => ({ ...r, [lightbox.rel]: deg }));   // optimistic: the turn is instant
+            void api().photosRotate(ws, lightbox.rel, deg).then(setRotations).catch(() => {});
+          }}
+          onClose={() => setLightbox(null)}
+          onReveal={() => void api().photosReveal(ws, lightbox.rel)}
+          onOpen={() => void api().photosOpen(ws, lightbox.rel)}
+        />
       )}
 
       {/* The confirm. This library is the only copy that exists — the folders it was built from

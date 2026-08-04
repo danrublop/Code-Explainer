@@ -35,6 +35,7 @@ import { applyTrash } from './services/photos/trash-apply';
 import { listTrashed, restoreMany } from './services/photos/trash-view';
 import { ThumbnailCache, mapLimit } from './services/photos/thumbnail-cache';
 import { loadBackedUp } from './services/photos/backup-status';
+import { AlbumStore, defaultAlbumFile } from './services/photos/album-store';
 import { sanitizeIncomingBlocks } from './services/notebook/sidecar';
 import { sanitizeIncomingDrawings } from './services/notebook/drawing-sidecar';
 import { MemoryNotebookIndex } from './services/notebook/memory-index';
@@ -248,6 +249,7 @@ class MainProcess {
   // Keep/delete decisions from the review pass. In main rather than localStorage: a review over
   // ~20k files is hours of work and must survive a renderer reload or a rebuild.
   private photoMarks: PhotoMarkStore | null = null;
+  private photoAlbums: AlbumStore | null = null;
   /** Where apply-trash records what it moved, and where the Trash view reads it back from. */
   private photoManifestDir(): string { return join(app.getPath('userData'), 'photo-trash-manifests'); }
   private trashDir(): string { return join(app.getPath('home'), '.Trash'); }
@@ -315,6 +317,7 @@ class MainProcess {
     );
     this.photoThumbs = new ThumbnailCache(join(app.getPath('userData'), 'photo-thumbs'));
     this.photoMarks = new PhotoMarkStore(join(app.getPath('userData'), 'photo-marks.json'));
+    this.photoAlbums = new AlbumStore(defaultAlbumFile(app.getPath('userData')));
     protocol.handle('photo', async (request) => {
       let rel: string;
       let root: string | null;
@@ -1463,6 +1466,45 @@ class MainProcess {
     this.ipcHandle('photos:backed-up', (_e, ws: unknown) => {
       const root = wsRoot(ws);
       return root ? [...loadBackedUp(root)] : [];
+    });
+
+    // --- Albums + rotation (display state; never rewrites a pixel) ------------------------
+    const wsId = (ws: unknown) => (typeof ws === 'string' && ws ? ws : null);
+    const relList = (v: unknown) =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && !!x) : [];
+
+    this.ipcHandle('photos:albums', (_e, ws: unknown) => {
+      const id = wsId(ws);
+      return {
+        albums: id && this.photoAlbums ? this.photoAlbums.albums(id) : {},
+        rotations: id && this.photoAlbums ? this.photoAlbums.rotations(id) : {},
+      };
+    });
+
+    this.ipcHandle('photos:album-add', (_e, ws: unknown, name: unknown, rels: unknown) => {
+      const id = wsId(ws);
+      if (!id || !this.photoAlbums || typeof name !== 'string') return {};
+      return this.photoAlbums.addToAlbum(id, name, relList(rels));
+    });
+
+    this.ipcHandle('photos:album-remove', (_e, ws: unknown, name: unknown, rels: unknown) => {
+      const id = wsId(ws);
+      if (!id || !this.photoAlbums || typeof name !== 'string') return {};
+      return this.photoAlbums.removeFromAlbum(id, name, relList(rels));
+    });
+
+    this.ipcHandle('photos:album-delete', (_e, ws: unknown, name: unknown) => {
+      const id = wsId(ws);
+      if (!id || !this.photoAlbums || typeof name !== 'string') return {};
+      return this.photoAlbums.deleteAlbum(id, name);
+    });
+
+    // Rotation is display-only: the grid and viewer apply a CSS transform. Baking it into the
+    // file is rotate-photos.py's job and it is lossy/destructive, so it stays out of the app.
+    this.ipcHandle('photos:rotate', (_e, ws: unknown, rel: unknown, deg: unknown) => {
+      const id = wsId(ws);
+      if (!id || !this.photoAlbums || typeof rel !== 'string' || typeof deg !== 'number') return {};
+      return this.photoAlbums.setRotation(id, rel, deg);
     });
 
     // --- Review marks + apply (the only write path over library files) --------------------

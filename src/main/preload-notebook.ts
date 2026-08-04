@@ -116,6 +116,17 @@ const api = {
   /** Keep/delete decisions. Stored in main (userData/photo-marks.json), so they outlive reloads. */
   photosBackedUp: (ws: string): Promise<string[]> => ipcRenderer.invoke('photos:backed-up', ws),
 
+  photosAlbums: (ws: string): Promise<{ albums: Record<string, string[]>; rotations: Record<string, number> }> =>
+    ipcRenderer.invoke('photos:albums', ws),
+  photosAlbumAdd: (ws: string, name: string, rels: string[]): Promise<Record<string, string[]>> =>
+    ipcRenderer.invoke('photos:album-add', ws, name, rels),
+  photosAlbumRemove: (ws: string, name: string, rels: string[]): Promise<Record<string, string[]>> =>
+    ipcRenderer.invoke('photos:album-remove', ws, name, rels),
+  photosAlbumDelete: (ws: string, name: string): Promise<Record<string, string[]>> =>
+    ipcRenderer.invoke('photos:album-delete', ws, name),
+  photosRotate: (ws: string, rel: string, deg: number): Promise<Record<string, number>> =>
+    ipcRenderer.invoke('photos:rotate', ws, rel, deg),
+
   photosMarks: (ws: string): Promise<PhotoMarks> => ipcRenderer.invoke('photos:marks', ws),
   /** Mark files keep/delete, or pass null to clear. Returns the updated map + totals. */
   photosMark: (ws: string, rels: string[], mark: 'keep' | 'delete' | null): Promise<PhotoMarks | null> =>
