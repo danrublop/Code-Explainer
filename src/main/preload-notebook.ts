@@ -74,6 +74,25 @@ interface PhotoIndex {
   sources: string[];
 }
 interface PhotoWorkspace { id: string; name: string; root: string }
+interface PhotoMarks {
+  marks: Record<string, { m: 'keep' | 'delete'; s: number }>;
+  totals: { keep: number; del: number; delBytes: number };
+}
+type TrashState = 'restored' | 'in-trash' | 'gone' | 'unknown';
+interface TrashRow {
+  rel: string; abs: string; size: number; mtime: number;
+  at: string; run: string; trashPath: string; state: TrashState;
+}
+interface RestoreResult { rel: string; ok: boolean; reason?: string }
+interface PhotoTrashReport {
+  error?: string;
+  trashed?: number;
+  missing?: number;
+  failed?: Array<{ rel: string; error: string }>;
+  bytes?: number;
+  manifest?: string;
+  totals?: { keep: number; del: number; delBytes: number };
+}
 
 const api = {
   // Handshake: tell main the notebook view has mounted and is listening, so it can flush
@@ -92,6 +111,22 @@ const api = {
   photosList: (ws: string, month: string): Promise<PhotoEntry[]> => ipcRenderer.invoke('photos:list', ws, month),
   photosReveal: (ws: string, rel: string): Promise<void> => ipcRenderer.invoke('photos:reveal', ws, rel),
   photosOpen: (ws: string, rel: string): Promise<void> => ipcRenderer.invoke('photos:open', ws, rel),
+  /** The N biggest files across the whole library — the view that matters for reclaiming space. */
+  photosLargest: (ws: string, limit?: number): Promise<PhotoEntry[]> => ipcRenderer.invoke('photos:largest', ws, limit),
+  /** Keep/delete decisions. Stored in main (userData/photo-marks.json), so they outlive reloads. */
+  photosBackedUp: (ws: string): Promise<string[]> => ipcRenderer.invoke('photos:backed-up', ws),
+
+  photosMarks: (ws: string): Promise<PhotoMarks> => ipcRenderer.invoke('photos:marks', ws),
+  /** Mark files keep/delete, or pass null to clear. Returns the updated map + totals. */
+  photosMark: (ws: string, rels: string[], mark: 'keep' | 'delete' | null): Promise<PhotoMarks | null> =>
+    ipcRenderer.invoke('photos:mark', ws, rels, mark),
+  /** Move every delete-marked file to the system Trash. Writes a manifest first; never unlinks. */
+  photosApplyTrash: (ws: string): Promise<PhotoTrashReport> => ipcRenderer.invoke('photos:apply-trash', ws),
+  /** What this app has trashed from this workspace, newest run first. Read from the manifests. */
+  photosTrashList: (ws: string): Promise<TrashRow[]> => ipcRenderer.invoke('photos:trash-list', ws),
+  /** Move files back from the Trash to their original paths. Per-item results; never deletes. */
+  photosTrashRestore: (ws: string, rels: string[]): Promise<RestoreResult[]> =>
+    ipcRenderer.invoke('photos:trash-restore', ws, rels),
   // Notes-app operations
   openSettings: () => ipcRenderer.send('open-settings'),
   /** Live Mac system stats (CPU/memory/load/uptime) for the dashboard view. */

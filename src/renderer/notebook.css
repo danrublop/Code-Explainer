@@ -1012,6 +1012,58 @@ body.resizing, body.resizing * { user-select: none !important; -webkit-user-sele
 .ph-btn { border: 1px solid var(--hairline); background: none; color: var(--ink); font-size: 12px; padding: 4px 11px; border-radius: 7px; cursor: pointer; }
 .ph-btn:hover { background: var(--hairline-soft); }
 
+/* Review pass: selection, keep/delete marks, and the size badge that makes the 245 GB legible. */
+.ph-selbar { display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-bottom: 1px solid var(--hairline); font-size: 12px; }
+.ph-selbar.ph-hint { color: var(--muted); font-size: 11px; }
+.ph-selbar.ph-hint b { color: var(--ink); font-weight: 650; }
+.ph-dim { color: var(--muted); font-size: 11px; }
+.ph-danger { border-color: #c0392b; color: #c0392b; }
+.ph-danger:hover:not(:disabled) { background: #c0392b; color: #fff; }
+.ph-btn:disabled { opacity: .5; cursor: default; }
+.ph-largest { font-weight: 600; margin-bottom: 8px; }
+
+.ph-size-badge { position: absolute; left: 4px; bottom: 4px; font-size: 9.5px; color: #fff; background: rgba(0,0,0,.55); border-radius: 4px; padding: 1px 4px; font-variant-numeric: tabular-nums; }
+/* Selection checkbox — the visible entry point into selection, top-left like Apple/Google Photos.
+   The white border + drop-shadow are load-bearing: this has to read on a snowy photo and on a
+   black one, and a plain grey circle disappears on both. Same treatment as the HTML gallery. */
+.ph-sel { position: absolute; left: 5px; top: 5px; z-index: 2; width: 19px; height: 19px; border: 1.5px solid #fff; border-radius: 50%; background: rgba(0,0,0,.35); filter: drop-shadow(0 0 3px rgba(0,0,0,.9)); opacity: 0; transition: opacity .12s; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.ph-tile:hover .ph-sel { opacity: .9; }
+.ph-tile.picked .ph-sel { opacity: 1; background: var(--accent); border-color: #fff; }
+.ph-tile.picked .ph-sel::after { content: ""; width: 9px; height: 5px; border: 2px solid #fff; border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px, -1px); }
+/* Mark badge moved to the top-RIGHT so it never sits under the checkbox. */
+.ph-mark { position: absolute; right: 4px; top: 4px; font-size: 9px; font-weight: 700; letter-spacing: .04em; color: #fff; border-radius: 4px; padding: 1px 5px; }
+.ph-mark.delete { background: #c0392b; }
+.ph-mark.keep { background: #2a9d4a; }
+.ph-tile.picked { outline: 3px solid var(--accent); outline-offset: -3px; }
+/* Marked-for-deletion tiles stay readable but visibly out of the library. */
+.ph-tile.mk-delete img, .ph-tile.mk-delete video, .ph-tile.mk-delete .ph-raw { opacity: .3; filter: grayscale(1); }
+.ph-tile.mk-keep { outline: 2px solid rgba(42,157,74,.55); outline-offset: -2px; }
+
+/* Trash view — a list, because the files are gone from the library and there is nothing to show. */
+.ph-trash-list { flex: 1; overflow-y: auto; padding: 6px 0; }
+.ph-trash-row { display: flex; align-items: center; gap: 10px; padding: 6px 14px; font-size: 12px; cursor: pointer; border-bottom: 1px solid var(--hairline-soft); }
+.ph-trash-row:hover { background: var(--hairline-soft); }
+.ph-trash-row.picked { background: var(--accent-soft); }
+.ph-trash-state { width: 16px; text-align: center; font-size: 11px; color: var(--muted); }
+.ph-trash-state.gone { color: #c0392b; }
+.ph-trash-state.restored { color: #2a9d4a; }
+.ph-trash-state.in-trash { color: var(--accent); }
+/* The Trash refused to answer (macOS TCC). Restore is still offered — the app may have access. */
+.ph-trash-state.unknown { color: #d08b2a; }
+.ph-trash-name { min-width: 0; flex: 0 1 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.ph-trash-size { flex: none; width: 66px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.ph-trash-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; color: var(--muted); font-size: 11px; }
+.ph-trash-at { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ph-restore-report { background: var(--accent-soft); }
+
+.ph-modal { background: var(--canvas); color: var(--ink); border-radius: 10px; padding: 22px 24px; width: 460px; max-width: 92vw; font-size: 13px; line-height: 1.5; }
+.ph-modal h2 { font-size: 16px; margin: 0 0 6px; }
+.ph-modal p { margin: 0 0 10px; }
+.ph-modal code { font-size: 11px; word-break: break-all; }
+.ph-modal .ph-big { font-size: 22px; font-weight: 650; color: var(--accent); margin-bottom: 12px; }
+.ph-modal .ph-warn { background: rgba(192,57,43,.1); border-left: 3px solid #c0392b; padding: 8px 10px; border-radius: 0 6px 6px 0; }
+.ph-modal-bar { display: flex; gap: 8px; margin-top: 16px; }
+
 .ph-lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.82); display: flex; align-items: center; justify-content: center; z-index: 200; }
 .ph-lb-body { display: flex; flex-direction: column; max-width: 92vw; max-height: 92vh; gap: 8px; }
 .ph-lb-body img, .ph-lb-body video { max-width: 92vw; max-height: 82vh; object-fit: contain; border-radius: 8px; }

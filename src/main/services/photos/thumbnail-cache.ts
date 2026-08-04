@@ -30,17 +30,22 @@ export class ThumbnailCache {
   private inflight = new Map<string, Promise<Buffer | null>>();
   private failed = new Set<string>();   // don't retry a file that can't be decoded
 
-  /** @param dir cache root (one per app, entries are keyed by workspace+path+mtime) */
+  /** @param dir cache root (one per app, entries are keyed by workspace+inode+mtime+size) */
   constructor(dir: string) {
     this.dir = dir;
     mkdirSync(this.dir, { recursive: true });
   }
 
-  // Key on workspace + path + mtime + size: two workspaces can hold the same relative path, and
-  // an edited file must not keep serving its stale thumbnail. Sharded into 256 subdirs so no
-  // single directory holds 10k+ entries.
-  private pathFor(ws: string, abs: string, mtimeMs: number, size: number): string {
-    const h = createHash('sha1').update(`${ws}\0${abs}\0${mtimeMs}\0${size}`).digest('hex');
+  // Key on workspace + INODE + mtime + size -- deliberately not the path.
+  //
+  // A rename changes the path but keeps the inode, so path-keying threw away the entire cache
+  // the moment 14,888 files were renamed. Inode survives renames and moves within a volume, so
+  // the thumbnails stay valid. mtime+size still cover edits, and cover inode reuse after a
+  // delete. Workspace stays in the key because two libraries can hold the same file.
+  //
+  // Sharded into 256 subdirs so no single directory holds 10k+ entries.
+  private pathFor(ws: string, dev: number, ino: number, mtimeMs: number, size: number): string {
+    const h = createHash('sha1').update(`${ws}\0${dev}\0${ino}\0${mtimeMs}\0${size}`).digest('hex');
     return join(this.dir, h.slice(0, 2), `${h}.jpg`);
   }
 
@@ -49,7 +54,7 @@ export class ThumbnailCache {
     let st;
     try { st = statSync(abs); } catch { return null; }
 
-    const cachePath = this.pathFor(ws, abs, st.mtimeMs, st.size);
+    const cachePath = this.pathFor(ws, st.dev, st.ino, st.mtimeMs, st.size);
     if (existsSync(cachePath)) {
       try { return readFileSync(cachePath); } catch { /* fall through and regenerate */ }
     }
@@ -84,7 +89,7 @@ export class ThumbnailCache {
   has(ws: string, abs: string): boolean {
     try {
       const st = statSync(abs);
-      return existsSync(this.pathFor(ws, abs, st.mtimeMs, st.size));
+      return existsSync(this.pathFor(ws, st.dev, st.ino, st.mtimeMs, st.size));
     } catch {
       return false;
     }

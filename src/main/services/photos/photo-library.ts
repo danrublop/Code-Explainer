@@ -7,7 +7,7 @@
 // nothing in this module writes, moves, or deletes.
 
 import { readdirSync, statSync, existsSync, realpathSync } from 'fs';
-import { join, resolve, sep, extname } from 'path';
+import { join, resolve, sep, extname, dirname } from 'path';
 import { homedir } from 'os';
 
 export const DEFAULT_LIBRARY_ROOT = join(homedir(), 'Media');
@@ -127,6 +127,24 @@ export function listMonth(month: string, root: string = DEFAULT_LIBRARY_ROOT): P
 }
 
 /**
+ * The biggest files in the library, across every month, newest-size-first.
+ *
+ * This is the view that matters for reclaiming space: 75% of the reference library's 245 GB is
+ * 4,483 videos and only 25% is 15,074 images, so deleting JPEGs a month at a time never moves
+ * the number. Sorting the whole library by size puts the 2 GB drone clips on the first screen.
+ *
+ * ponytail: walks every month and sorts in memory (~20k entries, sub-second, and the dirents
+ * are already warm from buildIndex). If a library ever gets big enough for that to hurt, cache
+ * the walk — don't add an index.
+ */
+export function listLargest(root: string = DEFAULT_LIBRARY_ROOT, limit = 500): PhotoEntry[] {
+  const all: PhotoEntry[] = [];
+  for (const m of buildIndex(root).months) all.push(...listMonth(m.month, root));
+  all.sort((a, b) => b.size - a.size || a.rel.localeCompare(b.rel));
+  return all.slice(0, Math.max(0, limit));
+}
+
+/**
  * Map a photo:// relative path to a real file, or null.
  *
  * This is the security boundary for the protocol handler: the renderer supplies `rel`, so it is
@@ -148,6 +166,34 @@ export function resolveInLibrary(rel: string, root: string = DEFAULT_LIBRARY_ROO
   // every legitimate file.
   try {
     const real = realpathSync(abs);
+    const rootReal = realpathSync(rootAbs);
+    if (real !== rootReal && !real.startsWith(rootReal + sep)) return null;
+  } catch { return null; }
+  return abs;
+}
+
+/**
+ * Same guard as resolveInLibrary, but for a path that is supposed to NOT exist yet — the
+ * destination of a restore from the Trash.
+ *
+ * resolveInLibrary can't serve this: it stat()s the file and rejects anything missing, which is
+ * every restore destination. The containment rules are identical, with one addition — the
+ * deepest existing ancestor is realpath'd, because a symlinked parent directory would otherwise
+ * redirect the write outside the root even though the literal path looks contained.
+ *
+ * The caller's input is a trash manifest: app-written, but a plain TSV on disk the user can edit,
+ * so it is treated as untrusted.
+ */
+export function resolveDestination(rel: string, root: string = DEFAULT_LIBRARY_ROOT): string | null {
+  if (!rel || rel.includes('\0')) return null;
+  const rootAbs = resolve(root);
+  const abs = resolve(rootAbs, rel);
+  if (!abs.startsWith(rootAbs + sep)) return null;      // must be strictly inside the root
+  if (!kindOf(abs)) return null;                        // only ever restore media
+  let probe = dirname(abs);
+  while (probe.length > rootAbs.length && !existsSync(probe)) probe = dirname(probe);
+  try {
+    const real = realpathSync(probe);
     const rootReal = realpathSync(rootAbs);
     if (real !== rootReal && !real.startsWith(rootReal + sep)) return null;
   } catch { return null; }

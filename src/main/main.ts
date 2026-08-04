@@ -4,7 +4,7 @@ import { autoUpdater } from 'electron-updater';
 import { join, extname, basename, resolve, sep } from 'path';
 import { pathToFileURL } from 'url';
 import { randomUUID } from 'crypto';
-import { rmSync, existsSync, readFileSync, writeFileSync, statSync } from 'fs';
+import { rmSync, existsSync, readFileSync, writeFileSync, statSync, mkdirSync, accessSync, constants as fsConstants } from 'fs';
 import { OllamaProcessService } from './services/ollama-process.service';
 // Notch panel stack (notch/notebook pivot)
 import { createMacCaptureProvider, isAccessibilityTrusted } from './services/capture/mac-capture';
@@ -28,9 +28,13 @@ import { MarkdownStore, isValidEntryId, makeEntry } from './services/notebook/ma
 import { FolderStore } from './services/notebook/folder-store';
 import { migrateHtmlBodies } from './services/notebook/migrate-html-bodies';
 import { NotebookStore } from './services/notebook/notebook-store';
-import { buildIndex, listMonth, resolveInLibrary } from './services/photos/photo-library';
+import { buildIndex, listMonth, listLargest, resolveInLibrary } from './services/photos/photo-library';
 import { PhotoWorkspaceStore } from './services/photos/workspace-store';
+import { PhotoMarkStore, type PhotoMark } from './services/photos/mark-store';
+import { applyTrash } from './services/photos/trash-apply';
+import { listTrashed, restoreMany } from './services/photos/trash-view';
 import { ThumbnailCache, mapLimit } from './services/photos/thumbnail-cache';
+import { loadBackedUp } from './services/photos/backup-status';
 import { sanitizeIncomingBlocks } from './services/notebook/sidecar';
 import { sanitizeIncomingDrawings } from './services/notebook/drawing-sidecar';
 import { MemoryNotebookIndex } from './services/notebook/memory-index';
@@ -241,6 +245,12 @@ class MainProcess {
   // the photo:// handler resolves every request through it.
   private photoWorkspaces: PhotoWorkspaceStore | null = null;
   private photoThumbs: ThumbnailCache | null = null;
+  // Keep/delete decisions from the review pass. In main rather than localStorage: a review over
+  // ~20k files is hours of work and must survive a renderer reload or a rebuild.
+  private photoMarks: PhotoMarkStore | null = null;
+  /** Where apply-trash records what it moved, and where the Trash view reads it back from. */
+  private photoManifestDir(): string { return join(app.getPath('userData'), 'photo-trash-manifests'); }
+  private trashDir(): string { return join(app.getPath('home'), '.Trash'); }
 
   async initialize(): Promise<void> {
     await app.whenReady();
@@ -304,6 +314,7 @@ class MainProcess {
       () => randomUUID(),
     );
     this.photoThumbs = new ThumbnailCache(join(app.getPath('userData'), 'photo-thumbs'));
+    this.photoMarks = new PhotoMarkStore(join(app.getPath('userData'), 'photo-marks.json'));
     protocol.handle('photo', async (request) => {
       let rel: string;
       let root: string | null;
@@ -1435,6 +1446,110 @@ class MainProcess {
       const root = wsRoot(ws);
       const abs = root && typeof rel === 'string' ? resolveInLibrary(rel, root) : null;
       if (abs) void shell.openPath(abs);
+    });
+    // Biggest files across the whole library. The month rail can't answer "what is actually
+    // eating the 245 GB" — 75% of it is 4,483 videos scattered over 60+ months.
+    this.ipcHandle('photos:largest', (_e, ws: unknown, limit: unknown) => {
+      const root = wsRoot(ws);
+      // Cap is a payload guard, not a product limit: the 'All photos' view asks for the whole
+      // library (~19.6k entries, a few MB of JSON over IPC, well under a second).
+      const n = typeof limit === 'number' && limit > 0 ? Math.min(200_000, Math.floor(limit)) : 500;
+      return root ? listLargest(root, n) : [];
+    });
+
+    // Rel paths already in Apple Photos, so the grid can show only what exists nowhere else.
+    // Read fresh each call: the TSV is regenerated out-of-band by icloud-crosscheck.py, and it
+    // is small enough (~1.3k rows) that caching would buy nothing but staleness.
+    this.ipcHandle('photos:backed-up', (_e, ws: unknown) => {
+      const root = wsRoot(ws);
+      return root ? [...loadBackedUp(root)] : [];
+    });
+
+    // --- Review marks + apply (the only write path over library files) --------------------
+    this.ipcHandle('photos:marks', (_e, ws: unknown) => {
+      const t = this.photoMarks && typeof ws === 'string' ? this.photoMarks.totals(ws) : { keep: 0, del: 0, delBytes: 0 };
+      return {
+        marks: this.photoMarks && typeof ws === 'string' ? this.photoMarks.get(ws) : {},
+        totals: t,
+      };
+    });
+    // Marking is a decision about a file, so the file must exist and be in THIS library:
+    // every rel goes through resolveInLibrary, and the size comes from disk rather than from
+    // the renderer, so a bogus rel can't enter the store and a bogus size can't inflate the
+    // "GB to reclaim" figure the confirm dialog shows.
+    //
+    // ponytail: synchronous, ~3 stats per path. "Select all shown" on the biggest month (3,264
+    // files) costs well under a frame budget's worth of blocking; move it off-thread only if a
+    // month ever gets big enough to stutter.
+    this.ipcHandle('photos:mark', (_e, ws: unknown, rels: unknown, mark: unknown) => {
+      const root = wsRoot(ws);
+      if (!root || typeof ws !== 'string' || !this.photoMarks || !Array.isArray(rels)) return null;
+      if (mark !== null && mark !== 'keep' && mark !== 'delete') return null;
+      const entries: Array<{ rel: string; size: number }> = [];
+      for (const rel of rels.slice(0, 100_000)) {
+        if (typeof rel !== 'string') continue;
+        if (mark === null) { entries.push({ rel, size: 0 }); continue; }   // clearing needs no file
+        const abs = resolveInLibrary(rel, root);
+        if (!abs) continue;
+        try { entries.push({ rel, size: statSync(abs).size }); } catch { /* vanished — skip */ }
+      }
+      this.photoMarks.set(ws, entries, mark as PhotoMark | null);
+      return { marks: this.photoMarks.get(ws), totals: this.photoMarks.totals(ws) };
+    });
+    /**
+     * Move every delete-marked file in this workspace to the system Trash.
+     *
+     * ~/Media is the sole copy of this library — no backup, no cloud, no 30-day window — so
+     * this uses shell.trashItem() and never unlink(). The manifest lands before the first move.
+     * Marks for files that actually moved are cleared, which is what makes a re-run a no-op.
+     */
+    this.ipcHandle('photos:apply-trash', async (_e, ws: unknown) => {
+      const root = wsRoot(ws);
+      if (!root || typeof ws !== 'string' || !this.photoMarks) return { error: 'unknown workspace' };
+      // If the Trash isn't writable there is nowhere safe to put these, and the answer is to
+      // stop — not to fall back to deleting.
+      const trashDir = this.trashDir();
+      try { accessSync(trashDir, fsConstants.W_OK); } catch {
+        return { error: `${trashDir} is not writable — refusing to touch any file.` };
+      }
+      const dir = this.photoManifestDir();
+      const result = await applyTrash(ws, root, this.photoMarks.deleteRels(ws), {
+        trash: (abs) => shell.trashItem(abs),
+        writeManifest: (text) => {
+          mkdirSync(dir, { recursive: true });
+          const p = join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}-${ws}.tsv`);
+          writeFileSync(p, text, 'utf8');
+          return p;
+        },
+      });
+      // Only clear what actually left; a failure keeps its mark so a retry still finds it.
+      this.photoMarks.set(ws, [...result.trashed.map((i) => ({ rel: i.rel, size: 0 })),
+        ...result.missing.map((rel) => ({ rel, size: 0 }))], null);
+      return {
+        trashed: result.trashed.length,
+        missing: result.missing.length,
+        failed: result.failed,
+        bytes: result.bytes,
+        manifest: result.manifest,
+        totals: this.photoMarks.totals(ws),
+      };
+    });
+
+    // --- Trash view: what this app deleted, and putting it back ---------------------------
+    // Sourced from the manifests, never from listing ~/.Trash — macOS TCC denies readdir() there.
+    this.ipcHandle('photos:trash-list', (_e, ws: unknown) => {
+      const root = wsRoot(ws);
+      if (!root || typeof ws !== 'string') return [];
+      return listTrashed(this.photoManifestDir(), ws, this.trashDir());
+    });
+    // Restore is the only path that writes INTO the library. resolveDestination (inside
+    // restoreMany) re-derives and re-checks every destination, so a hand-edited manifest cannot
+    // make this write outside the root. Nothing is ever removed from the Trash on failure.
+    this.ipcHandle('photos:trash-restore', (_e, ws: unknown, rels: unknown) => {
+      const root = wsRoot(ws);
+      if (!root || typeof ws !== 'string' || !Array.isArray(rels)) return [];
+      const rows = listTrashed(this.photoManifestDir(), ws, this.trashDir());
+      return restoreMany(rels.filter((r): r is string => typeof r === 'string'), rows, root, this.trashDir());
     });
 
     this.ipcHandle('notebook:rename', (_e, id: string, title: string) => { if (isValidEntryId(id)) this.notebookStore?.rename(id, title); });
