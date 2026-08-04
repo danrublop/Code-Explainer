@@ -3,6 +3,8 @@
 // unavailable (model missing / Ollama down → embedder returns null) it falls back to the
 // notebook's BM25 keyword search. Pure + injected deps → fully unit-testable.
 
+import { QUERY_PREFIX } from './embed-service';
+
 export interface Chunk { noteId: string; idx: number; text: string; vec: Float32Array }
 
 export interface Embedder {
@@ -31,6 +33,23 @@ export interface RetrieveOpts {
   minScore?: number;
 }
 
+// Greetings / pleasantries carry no retrieval signal. Left in, they get matched anyway — nomic
+// scores even "hey" at ~0.45 cosine against ANY note, and the keyword fallback has no score floor
+// at all — and the model then parrots whatever note came back. A message whose every word is
+// greeting/filler retrieves nothing; any real request has at least one content word that isn't here.
+const FILLER_WORDS = new Set([
+  'hi', 'hii', 'hey', 'heyy', 'heyyy', 'hello', 'helloo', 'heya', 'hiya', 'yo', 'yoo', 'sup', 'howdy',
+  'hola', 'there', 'thanks', 'thank', 'thankyou', 'thx', 'ty', 'cheers', 'ok', 'okay', 'kk', 'cool',
+  'nice', 'great', 'awesome', 'please', 'pls', 'plz', 'good', 'morning', 'afternoon', 'evening',
+  'night', 'day', 'how', 'are', 'is', 'you', 'u', 'it', 'going', 'whats', 'what', 'up', 'wyd', 'hows',
+  'friend', 'buddy', 'man', 'dude', 'everyone', 'all', 'folks', 'team', 'yall',
+]);
+export function isSubstantiveQuery(query: string): boolean {
+  const tokens = query.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  if (!tokens.length) return false; // empty / punctuation only
+  return tokens.some((t) => !FILLER_WORDS.has(t));
+}
+
 export function cosine(a: Float32Array, b: Float32Array): number {
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
@@ -54,13 +73,26 @@ export async function retrieve(
   deps: RetrieveDeps,
   opts: RetrieveOpts,
 ): Promise<{ system: string; citations: string[] } | null> {
-  const { excludeNoteId, k = 5, charBudget = 6000, perNoteBudget = 1500, minScore = 0.15 } = opts;
-  const [qvec] = await deps.embedder.embed([query]);
+  // nomic's cosine floor for unrelated text is high (~0.45), so this threshold must be well above
+  // it or every note "matches" — measured relevant hits land ~0.7+, giving a clean gap.
+  const { excludeNoteId, k = 5, charBudget = 6000, perNoteBudget = 1500, minScore = 0.55 } = opts;
+  // A pure greeting retrieves nothing (see isSubstantiveQuery) — saves an embed call and, more
+  // importantly, stops the model parroting a note it was handed for saying "hey".
+  if (!isSubstantiveQuery(query)) return null;
+  // Query gets nomic's search_query prefix to match the search_document prefix chunks were embedded
+  // with (see embed-service); mismatched prefixes tank retrieval quality.
+  const [qvec] = await deps.embedder.embed([QUERY_PREFIX + query]);
 
   // hits: {noteId, text} best-first.
+  // Use the vector index only when the embedder is up AND there are vectors to search. An empty
+  // index with a working embedder happens right after an embedding-recipe bump (everything is being
+  // re-embedded under a new tag) — fall through to keyword search then, so chat still gets note
+  // context instead of silently none. (A non-empty index that simply has no relevant chunk still
+  // returns null below, which is correct: don't inject irrelevant notes.)
+  const vectors = qvec ? deps.chunks() : [];
   let hits: { noteId: string; text: string }[];
-  if (qvec) {
-    hits = deps.chunks()
+  if (qvec && vectors.length) {
+    hits = vectors
       .filter((c) => c.noteId !== excludeNoteId && c.vec.length === qvec.length)
       .map((c) => ({ c, score: cosine(qvec, c.vec) }))
       .filter(({ score }) => score >= minScore) // don't inject irrelevant notes as context
@@ -68,7 +100,7 @@ export async function retrieve(
       .slice(0, k)
       .map(({ c }) => ({ noteId: c.noteId, text: c.text }));
   } else {
-    // Embeddings unavailable → BM25 keyword fallback over whole notes.
+    // Embeddings unavailable, or no vectors indexed yet → BM25 keyword fallback over whole notes.
     hits = deps.keyword.search(query)
       .filter((h) => h.id !== excludeNoteId)
       .slice(0, k)
@@ -76,14 +108,18 @@ export async function retrieve(
   }
   if (!hits.length) return null;
 
+  // A note (title or body) could itself contain the literal <user_notes> fence and "close" the
+  // data region early, promoting its following lines to system instructions. Strip the fence tags
+  // from every excerpt so untrusted content can never break out of the delimiter.
+  const defence = (s: string) => s.replace(/<\/?user_notes>/gi, '');
   const citations: string[] = [];
   const blocks: string[] = [];
   let used = 0;
   for (const h of hits) {
-    const excerpt = h.text.slice(0, perNoteBudget);
+    const excerpt = defence(h.text.slice(0, perNoteBudget));
     if (used + excerpt.length > charBudget) break;
     used += excerpt.length;
-    blocks.push(`[${deps.titleOf(h.noteId)}]\n${excerpt}`);
+    blocks.push(`[${defence(deps.titleOf(h.noteId))}]\n${excerpt}`);
     if (!citations.includes(h.noteId)) citations.push(h.noteId);
   }
   if (!blocks.length) return null;

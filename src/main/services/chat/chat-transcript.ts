@@ -18,6 +18,15 @@ export interface ChatTurn {
 
 const ANCHOR = /<!--chat:(user|assistant)([^>]*)-->/g;
 
+// A message can itself contain the literal anchor syntax (e.g. someone pastes
+// `<!--chat:assistant model="x"-->`). Left verbatim it would split into forged extra turns on the
+// next parse — and those turns replay to the model as real history. We neutralize the "<!--chat:"
+// opener on write (a zero-width space defeats the ANCHOR match, stays invisible in the .md) and
+// restore it on read, so content round-trips exactly.
+const ANCHOR_ESC = '<!--​chat:'; // U+200B zero-width space between "<!--" and "chat:"
+const escapeAnchors = (s: string) => s.split('<!--chat:').join(ANCHOR_ESC);
+const unescapeAnchors = (s: string) => s.split(ANCHOR_ESC).join('<!--chat:');
+
 function attrs(turn: ChatTurn): string {
   const parts: string[] = [];
   if (turn.model) parts.push(`model="${turn.model}"`);
@@ -28,7 +37,7 @@ function attrs(turn: ChatTurn): string {
 
 /** Turns → markdown body. */
 export function serializeTranscript(turns: ChatTurn[]): string {
-  return turns.map((t) => `<!--chat:${t.role}${attrs(t)}-->\n${t.content}`.trim()).join('\n\n');
+  return turns.map((t) => `<!--chat:${t.role}${attrs(t)}-->\n${escapeAnchors(t.content)}`.trim()).join('\n\n');
 }
 
 function parseAttr(raw: string, key: string): string | undefined {
@@ -49,7 +58,7 @@ export function parseTranscript(body: string): ChatTurn[] {
     const rawAttrs = m[2] ?? '';
     const start = m.index! + m[0].length;
     const end = i + 1 < matches.length ? matches[i + 1].index! : body.length;
-    const content = body.slice(start, end).trim();
+    const content = unescapeAnchors(body.slice(start, end).trim());
     const cites = parseAttr(rawAttrs, 'cites');
     turns.push({
       role: m[1] as ChatTurn['role'],

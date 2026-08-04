@@ -9,7 +9,7 @@
 // the note and stops — a later trigger retries. All deps injected → no Electron in tests.
 
 import { splitIntoChunks } from './chunker';
-import type { EmbedService } from './embed-service';
+import { DOC_PREFIX, type EmbedService } from './embed-service';
 import type { ChunkStore } from './chunk-store';
 
 export interface EmbedSyncDeps {
@@ -29,8 +29,11 @@ export class EmbedSync {
   private running = false;
   constructor(private readonly deps: EmbedSyncDeps) {}
 
-  /** Enqueue notes with no current-model embedding yet (first run / after a model change). */
+  /** Enqueue notes with no current-model embedding yet (first run / after a model change). Also
+   *  drops chunks for notes that no longer exist — otherwise a note deleted while the app was closed
+   *  keeps getting quoted and cited by RAG. */
   backfill(): void {
+    this.deps.store.retain(new Set(this.deps.listNoteIds()));
     const done = this.deps.store.embeddedNotes(this.deps.model);
     for (const id of this.deps.listNoteIds()) if (!done.has(id)) this.enqueue(id);
   }
@@ -55,11 +58,13 @@ export class EmbedSync {
         const body = this.deps.getBody(id);
         if (!body || !body.trim()) { this.deps.store.deleteNote(id); continue; }
         const chunks = splitIntoChunks(body);
-        const vecs = await this.deps.embedder.embed(chunks);
+        const vecs = await this.deps.embedder.embed(chunks.map((c) => DOC_PREFIX + c));
         if (vecs.some((v) => v === null)) {
           this.queue.unshift(id); // embeddings unavailable — retry this note later
           break;
         }
+        // The note may have been deleted while we were awaiting the embed — don't resurrect it.
+        if (this.deps.getBody(id) === null) { this.deps.store.deleteNote(id); continue; }
         this.deps.store.replaceNote(
           id,
           chunks.map((text, idx) => ({ idx, text, vec: Array.from(vecs[idx]!), model: this.deps.model })),

@@ -16,6 +16,31 @@ export interface NoteWithBlocks {
   drawings: DrawingMeta[];
 }
 
+/** One of the processes currently working the CPU hardest. */
+export interface TopApp {
+  name: string;   // executable name, e.g. "Google Chrome Helper"
+  cpu: number;    // % of one core, as ps reports it — can exceed 100 on a multithreaded process
+}
+
+/** A snapshot of live Mac system stats for the dashboard view. */
+export interface SystemStats {
+  cpu: number;            // overall CPU busy %, 0-100
+  cores: number[];        // per-core busy %
+  cpuModel: string;
+  memTotal: number;       // bytes
+  memUsed: number;        // bytes
+  load: number[];         // 1/5/15-min load average
+  uptime: number;         // seconds
+  hostname: string;
+  platform: string;
+  arch: string;
+  release: string;
+  gpu: string;            // GPU model name ('' if unknown)
+  rxRate: number;         // network download, bytes/sec
+  txRate: number;         // network upload, bytes/sec
+  topApps: TopApp[];      // busiest processes, CPU-heaviest first
+}
+
 export interface NotebookMeta {
   prompt: string;        // action label (Explain / Debug / …) or freeform question
   selection: string;     // captured text
@@ -30,18 +55,93 @@ export interface NoteSummary {
   tags: string[];
   sourceApp?: string;
   model?: string;
-  sourceKind?: 'text' | 'image' | 'chat' | 'drawing';
+  sourceKind?: 'text' | 'image' | 'chat' | 'drawing' | 'game' | 'calendar';
   imagePath?: string;
   pinned: boolean;
   createdAt: string;
+}
+
+// Mirrors services/photos/photo-library.ts. Duplicated rather than imported: the preload is
+// bundled separately and must not pull main-process fs code into its graph.
+type PhotoKind = 'image' | 'raw' | 'video';
+interface PhotoEntry {
+  rel: string; name: string; month: string; source: string;
+  kind: PhotoKind; size: number; mtime: number;
+}
+interface PhotoIndex {
+  root: string; exists: boolean; total: number;
+  months: Array<{ month: string; year: string; count: number }>;
+  sources: string[];
+}
+interface PhotoWorkspace { id: string; name: string; root: string }
+interface PhotoMarks {
+  marks: Record<string, { m: 'keep' | 'delete'; s: number }>;
+  totals: { keep: number; del: number; delBytes: number };
+}
+type TrashState = 'restored' | 'in-trash' | 'gone' | 'unknown';
+interface TrashRow {
+  rel: string; abs: string; size: number; mtime: number;
+  at: string; run: string; trashPath: string; state: TrashState;
+}
+interface RestoreResult { rel: string; ok: boolean; reason?: string }
+interface PhotoTrashReport {
+  error?: string;
+  trashed?: number;
+  missing?: number;
+  failed?: Array<{ rel: string; error: string }>;
+  bytes?: number;
+  manifest?: string;
+  totals?: { keep: number; del: number; delBytes: number };
 }
 
 const api = {
   // Handshake: tell main the notebook view has mounted and is listening, so it can flush
   // any answer that started streaming before the window finished loading.
   signalReady: () => ipcRenderer.send('notebook:ready'),
+  // Photos: read-only browse over the attached libraries. Every call names a workspace, so the
+  // main side can scope it to that one root. Pixels do NOT come through here — the grid points
+  // <img>/<video> at photo://<ws>/<rel> URLs.
+  photosWorkspaces: (): Promise<PhotoWorkspace[]> => ipcRenderer.invoke('photos:workspaces'),
+  /** Opens the system folder picker; resolves null if the user cancels. */
+  photosWorkspaceAdd: (): Promise<PhotoWorkspace | null> => ipcRenderer.invoke('photos:workspace-add'),
+  /** Detaches the folder from the app. Does not delete anything on disk. */
+  photosWorkspaceRemove: (ws: string): Promise<void> => ipcRenderer.invoke('photos:workspace-remove', ws),
+  photosWorkspaceRename: (ws: string, name: string): Promise<void> => ipcRenderer.invoke('photos:workspace-rename', ws, name),
+  photosIndex: (ws: string): Promise<PhotoIndex> => ipcRenderer.invoke('photos:index', ws),
+  photosList: (ws: string, month: string): Promise<PhotoEntry[]> => ipcRenderer.invoke('photos:list', ws, month),
+  photosReveal: (ws: string, rel: string): Promise<void> => ipcRenderer.invoke('photos:reveal', ws, rel),
+  photosOpen: (ws: string, rel: string): Promise<void> => ipcRenderer.invoke('photos:open', ws, rel),
+  /** The N biggest files across the whole library — the view that matters for reclaiming space. */
+  photosLargest: (ws: string, limit?: number): Promise<PhotoEntry[]> => ipcRenderer.invoke('photos:largest', ws, limit),
+  /** Keep/delete decisions. Stored in main (userData/photo-marks.json), so they outlive reloads. */
+  photosBackedUp: (ws: string): Promise<string[]> => ipcRenderer.invoke('photos:backed-up', ws),
+
+  photosAlbums: (ws: string): Promise<{ albums: Record<string, string[]>; rotations: Record<string, number> }> =>
+    ipcRenderer.invoke('photos:albums', ws),
+  photosAlbumAdd: (ws: string, name: string, rels: string[]): Promise<Record<string, string[]>> =>
+    ipcRenderer.invoke('photos:album-add', ws, name, rels),
+  photosAlbumRemove: (ws: string, name: string, rels: string[]): Promise<Record<string, string[]>> =>
+    ipcRenderer.invoke('photos:album-remove', ws, name, rels),
+  photosAlbumDelete: (ws: string, name: string): Promise<Record<string, string[]>> =>
+    ipcRenderer.invoke('photos:album-delete', ws, name),
+  photosRotate: (ws: string, rel: string, deg: number): Promise<Record<string, number>> =>
+    ipcRenderer.invoke('photos:rotate', ws, rel, deg),
+
+  photosMarks: (ws: string): Promise<PhotoMarks> => ipcRenderer.invoke('photos:marks', ws),
+  /** Mark files keep/delete, or pass null to clear. Returns the updated map + totals. */
+  photosMark: (ws: string, rels: string[], mark: 'keep' | 'delete' | null): Promise<PhotoMarks | null> =>
+    ipcRenderer.invoke('photos:mark', ws, rels, mark),
+  /** Move every delete-marked file to the system Trash. Writes a manifest first; never unlinks. */
+  photosApplyTrash: (ws: string): Promise<PhotoTrashReport> => ipcRenderer.invoke('photos:apply-trash', ws),
+  /** What this app has trashed from this workspace, newest run first. Read from the manifests. */
+  photosTrashList: (ws: string): Promise<TrashRow[]> => ipcRenderer.invoke('photos:trash-list', ws),
+  /** Move files back from the Trash to their original paths. Per-item results; never deletes. */
+  photosTrashRestore: (ws: string, rels: string[]): Promise<RestoreResult[]> =>
+    ipcRenderer.invoke('photos:trash-restore', ws, rels),
   // Notes-app operations
   openSettings: () => ipcRenderer.send('open-settings'),
+  /** Live Mac system stats (CPU/memory/load/uptime) for the dashboard view. */
+  systemStats: (): Promise<SystemStats> => ipcRenderer.invoke('system:stats'),
   list: (): Promise<NoteSummary[]> => ipcRenderer.invoke('notebook:list'),
   /** Abort any in-flight inline generation (call on editor unmount). */
   cancelGen: (): Promise<void> => ipcRenderer.invoke('notebook:cancel-gen'),
@@ -68,7 +168,7 @@ const api = {
   restore: (id: string): Promise<void> => ipcRenderer.invoke('notebook:restore', id),
   remove: (id: string): Promise<void> => ipcRenderer.invoke('notebook:delete', id),
   /** Create an empty note (optionally inside a folder); resolves with the new note id. */
-  createNote: (folderId?: string | null, kind?: 'note' | 'chat' | 'drawing'): Promise<string | null> => ipcRenderer.invoke('notebook:create', folderId ?? null, kind ?? 'note'),
+  createNote: (folderId?: string | null, kind?: 'note' | 'chat' | 'drawing' | 'game' | 'calendar', body?: string): Promise<string | null> => ipcRenderer.invoke('notebook:create', folderId ?? null, kind ?? 'note', body),
 
   // ── Folder tree (organization) ──────────────────────────────────────────────────────
   foldersGet: (): Promise<FolderState> => ipcRenderer.invoke('folders:get'),
@@ -82,6 +182,8 @@ const api = {
   minimizeWindow: () => ipcRenderer.send('win:minimize'),
   zoomWindow: () => ipcRenderer.send('win:zoom'),
   closeWindow: () => ipcRenderer.send('win:close'),
+  /** Open a note in its own separate window. */
+  openInNewWindow: (id: string) => ipcRenderer.send('notebook:open-window', id),
   /** Fired after a streamed answer is saved (id of the new note). */
   onSaved: (cb: (id: string) => void) => {
     const h = (_e: unknown, id: string) => cb(id);
@@ -159,9 +261,12 @@ const api = {
 
   // ── Chat (source_kind=chat notes) ──────────────────────────────────────────────
   chatGet: (noteId: string): Promise<ChatTurn[]> => ipcRenderer.invoke('chat:get', noteId),
-  chatSend: (req: { noteId: string; text: string; model?: string; useRag?: boolean }): Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }> =>
+  chatSend: (req: { noteId: string; text: string; model?: string; useRag?: boolean; attachedNoteId?: string }): Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }> =>
     ipcRenderer.invoke('chat:send', req),
   chatAbort: (noteId: string): Promise<void> => ipcRenderer.invoke('chat:abort', noteId),
+  chatRegenerate: (req: { noteId: string; model?: string; useRag?: boolean; attachedNoteId?: string }): Promise<{ ok: boolean; answer?: string; citations?: string[]; error?: string }> =>
+    ipcRenderer.invoke('chat:regenerate', req),
+  chatIsStreaming: (noteId: string): Promise<boolean> => ipcRenderer.invoke('chat:is-streaming', noteId),
   ragStatus: (): Promise<{ healthy: boolean; chunks: number; model: string }> => ipcRenderer.invoke('chat:rag-status'),
   onChatStart: (cb: (p: { noteId: string }) => void) => {
     const h = (_e: unknown, p: { noteId: string }) => cb(p);
@@ -182,6 +287,26 @@ const api = {
     const h = (_e: unknown, p: { noteId: string; error: string }) => cb(p);
     ipcRenderer.on('chat:error', h);
     return () => ipcRenderer.removeListener('chat:error', h);
+  },
+
+  // ── Note-side chat panel (ephemeral: renderer owns the transcript) ──────────────
+  noteChatSend: (req: { noteId: string; model?: string; noteMarkdown: string; history: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ ok: boolean; answer?: string; error?: string }> =>
+    ipcRenderer.invoke('notechat:send', req),
+  noteChatAbort: (noteId: string): Promise<void> => ipcRenderer.invoke('notechat:abort', noteId),
+  onNoteChatToken: (cb: (p: { noteId: string; delta: string }) => void) => {
+    const h = (_e: unknown, p: { noteId: string; delta: string }) => cb(p);
+    ipcRenderer.on('notechat:token', h);
+    return () => ipcRenderer.removeListener('notechat:token', h);
+  },
+  onNoteChatDone: (cb: (p: { noteId: string; answer: string; model: string }) => void) => {
+    const h = (_e: unknown, p: { noteId: string; answer: string; model: string }) => cb(p);
+    ipcRenderer.on('notechat:done', h);
+    return () => ipcRenderer.removeListener('notechat:done', h);
+  },
+  onNoteChatError: (cb: (p: { noteId: string; error: string }) => void) => {
+    const h = (_e: unknown, p: { noteId: string; error: string }) => cb(p);
+    ipcRenderer.on('notechat:error', h);
+    return () => ipcRenderer.removeListener('notechat:error', h);
   },
 };
 

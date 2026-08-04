@@ -8,6 +8,7 @@ function fakeStore() {
   const byNote = new Map<string, { model: string }[]>();
   return {
     embeddedNotes: (model: string) => new Set([...byNote].filter(([, cs]) => cs.some((c) => c.model === model)).map(([id]) => id)),
+    retain: vi.fn((live: Set<string>) => { for (const id of [...byNote.keys()]) if (!live.has(id)) byNote.delete(id); }),
     replaceNote: vi.fn((noteId: string, chunks: { model: string }[]) => { byNote.set(noteId, chunks); }),
     deleteNote: vi.fn((noteId: string) => { byNote.delete(noteId); }),
     _byNote: byNote,

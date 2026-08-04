@@ -72,3 +72,45 @@ describe('ChatController.sendTurn', () => {
     expect(retrieve.retrieve).not.toHaveBeenCalled();
   });
 });
+
+describe('ChatController.regenerate', () => {
+  it('drops the last assistant turn and re-answers the same user message (no duplicate user turn)', async () => {
+    const llm = okLlm('a fresh answer');
+    const store = fakeStore('<!--chat:user-->\nq1\n\n<!--chat:assistant model="m"-->\nold answer');
+    const c = new ChatController(deps({ llm, store }));
+    const r = await c.regenerate({ noteId: 'n1', model: 'm', useRag: false });
+    expect(r.answer).toBe('a fresh answer');
+    const turns = parseTranscript(store.body);
+    expect(turns.map((t) => t.role)).toEqual(['user', 'assistant']); // still one pair, not user/asst/user
+    expect(turns[0].content).toBe('q1');
+    expect(turns[1].content).toBe('a fresh answer');
+    // The model saw the history up to and including the user turn, prompted with that message.
+    expect(vi.mocked(llm.generate).mock.calls[0][0].prompt).toBe('q1');
+  });
+
+  it('throws when there is nothing to regenerate', async () => {
+    const c = new ChatController(deps({ store: fakeStore('') }));
+    await expect(c.regenerate({ noteId: 'n1', model: 'm', useRag: false })).rejects.toThrow('Nothing to regenerate');
+  });
+
+  it('keeps the previous answer on disk when a regenerate fails (no data loss)', async () => {
+    const store = fakeStore('<!--chat:user-->\nq1\n\n<!--chat:assistant model="m"-->\nold answer');
+    const llm: LlmClient = { generate: vi.fn(async () => { throw new Error('network down'); }) };
+    const c = new ChatController(deps({ llm, store }));
+    await expect(c.regenerate({ noteId: 'n1', model: 'm', useRag: false })).rejects.toThrow('network down');
+    // The drop is NOT persisted before the replacement exists, so the old answer survives.
+    expect(parseTranscript(store.body).map((t) => t.content)).toEqual(['q1', 'old answer']);
+  });
+});
+
+describe('ChatController history shaping', () => {
+  it('coalesces a leftover unanswered user turn with the next send (no double user turn)', async () => {
+    const llm = okLlm();
+    const store = fakeStore('<!--chat:user-->\nq1'); // a cancelled send left a lone user turn
+    const c = new ChatController(deps({ llm, store }));
+    await c.sendTurn({ noteId: 'n1', text: 'q2', model: 'm', useRag: false });
+    const sent = vi.mocked(llm.generate).mock.calls[0][0].messages!;
+    expect(sent.map((m) => m.role)).toEqual(['user']); // merged, not [user, user] → no provider 400
+    expect(sent[0].content).toBe('q1\n\nq2');
+  });
+});

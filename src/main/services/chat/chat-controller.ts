@@ -37,7 +37,18 @@ function toMessages(turns: ChatTurn[]): ChatMessage[] {
   while (total > HISTORY_CHAR_BUDGET && msgs.length > 1) {
     total -= msgs.shift()!.content.length;
   }
-  return msgs;
+  // Trimming can leave a leading assistant turn; Anthropic rejects a history that doesn't start
+  // with a user message. Drop any leading assistant turns (the final user turn always remains).
+  while (msgs.length > 1 && msgs[0].role === 'assistant') msgs.shift();
+  // Coalesce consecutive same-role turns — a cancelled send leaves an unanswered user turn, so the
+  // next send would produce two user messages in a row, which providers (Anthropic) reject.
+  const merged: ChatMessage[] = [];
+  for (const m of msgs) {
+    const prev = merged[merged.length - 1];
+    if (prev && prev.role === m.role) prev.content += '\n\n' + m.content;
+    else merged.push({ ...m });
+  }
+  return merged;
 }
 
 export class ChatController {
@@ -48,10 +59,12 @@ export class ChatController {
     text: string;
     model: string;
     useRag: boolean;
+    /** Instructions to put ahead of any retrieved context — the agent's tools (see main.ts). */
+    systemPrefix?: string;
     onToken?: (delta: string) => void;
     signal?: AbortSignal;
   }): Promise<{ answer: string; citations: string[] }> {
-    const { noteId, text, model, useRag, onToken, signal } = opts;
+    const { noteId, text } = opts;
     const turns = parseTranscript(this.deps.store.getBody(noteId) ?? '');
 
     // Persist the user turn immediately, so a cancelled/failed generation still leaves the
@@ -59,18 +72,57 @@ export class ChatController {
     turns.push({ role: 'user', content: text, ts: this.deps.now() });
     this.deps.store.updateBody(noteId, serializeTranscript(turns));
 
+    return this.runAssistant(turns, { ...opts, query: text });
+  }
+
+  /**
+   * Re-answer the last exchange: drop the trailing assistant turn (the one being replaced) and
+   * stream a fresh answer to the preceding user message — without appending a duplicate user turn.
+   * Throws 'Nothing to regenerate' if the transcript doesn't end with a user→assistant pair.
+   */
+  async regenerate(opts: {
+    noteId: string;
+    model: string;
+    useRag: boolean;
+    systemPrefix?: string;
+    onToken?: (delta: string) => void;
+    signal?: AbortSignal;
+  }): Promise<{ answer: string; citations: string[] }> {
+    const { noteId } = opts;
+    const turns = parseTranscript(this.deps.store.getBody(noteId) ?? '');
+    if (turns.length && turns[turns.length - 1].role === 'assistant') turns.pop();
+    const last = turns[turns.length - 1];
+    if (!last || last.role !== 'user') throw new Error('Nothing to regenerate');
+    // Do NOT persist the drop yet: the on-disk transcript is the source of truth, so if we wrote
+    // [..., user] now and then generation were cancelled or failed, the previous answer would be
+    // gone for good. runAssistant persists once, on success — which atomically replaces the old
+    // assistant turn. On cancel/error the disk keeps the old answer (the renderer reloads it).
+    return this.runAssistant(turns, { ...opts, query: last.content });
+  }
+
+  /** Shared tail of sendTurn/regenerate: RAG on `query`, stream, append + persist the answer.
+   *  `turns` already ends with the user message being answered. */
+  private async runAssistant(
+    turns: ChatTurn[],
+    opts: { noteId: string; model: string; useRag: boolean; systemPrefix?: string; query: string; onToken?: (d: string) => void; signal?: AbortSignal },
+  ): Promise<{ answer: string; citations: string[] }> {
+    const { noteId, model, useRag, systemPrefix, query, onToken, signal } = opts;
+
     // RAG: retrieve context for the user's message, excluding this chat's own note (so a chat
     // never feeds itself its own transcript). The retriever wraps note text as untrusted data.
-    let system: string | undefined;
+    let ragSystem: string | undefined;
     let citations: string[] = [];
     if (useRag && this.deps.retrieve) {
-      const r = await this.deps.retrieve.retrieve(text, { excludeNoteId: noteId });
-      if (r) { system = r.system; citations = r.citations; }
+      const r = await this.deps.retrieve.retrieve(query, { excludeNoteId: noteId });
+      if (r) { ragSystem = r.system; citations = r.citations; }
     }
+    // Tools first, retrieved notes after: the notes are untrusted data, so anything in them that
+    // looks like an instruction arrives already framed by the real instructions.
+    const system = [systemPrefix, ragSystem].filter(Boolean).join('\n\n') || undefined;
 
     // Throws on cancel ('cancelled') or error — the user turn is already saved, and we do NOT
     // append a partial assistant turn.
-    const answer = await this.deps.llm.generate({ model, prompt: text, messages: toMessages(turns), system, onToken, signal });
+    const answer = await this.deps.llm.generate({ model, prompt: query, messages: toMessages(turns), system, onToken, signal });
 
     turns.push({ role: 'assistant', content: answer, model, cites: citations.length ? citations : undefined, ts: this.deps.now() });
     this.deps.store.updateBody(noteId, serializeTranscript(turns));
